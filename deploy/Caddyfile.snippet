@@ -1,0 +1,11 @@
+# Добавить в основной Caddyfile (или отдельный snippet).
+# Не трогает другие сайты — только этот host.
+
+outreachapi.arix.vu {
+	encode gzip
+	reverse_proxy 127.0.0.1:8091
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+}

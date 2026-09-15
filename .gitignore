@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+.history/
+
+# Project data (sessions, DB, uploads — not for git)
+data/
+*.session
+*.session-journal
+
+# Tests / build
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Packs / temp
+*.zip
+*.tar.gz
+tmp/
+temp/

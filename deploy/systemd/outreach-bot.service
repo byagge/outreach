@@ -1,0 +1,28 @@
+# Outreach — Ubuntu deploy (рядом с другими проектами, без конфликтов)
+#
+# Каталог: /opt/outreach
+# API:     https://outreachapi.arix.vu  → 127.0.0.1:8091
+# Бот:     отдельный systemd unit outreach-bot
+#
+# Порт 8091 выбран специально, чтобы не пересекаться с другими сервисами.
+
+[Unit]
+Description=Outreach Telegram Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/outreach
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/opt/outreach/.env
+ExecStart=/opt/outreach/.venv/bin/python /opt/outreach/main.py
+Restart=always
+RestartSec=5
+# Изоляция от чужих проектов
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Outreach HTTP API (outreachapi.arix.vu)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/outreach
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/opt/outreach/.env
+ExecStart=/opt/outreach/.venv/bin/python /opt/outreach/api_main.py
+Restart=always
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
