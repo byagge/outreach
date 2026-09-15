@@ -175,6 +175,31 @@ class BanContact:
 
 
 @dataclass
+class CollectRun:
+    id: int
+    source: str = "bot"  # bot | api
+    kind: str = ""  # chat | dm | mailing
+    mode: str = ""
+    target: str = ""
+    title: str = ""
+    account_id: int | None = None
+    base_id: int | None = None
+    added: int = 0
+    banned: int = 0
+    stopped: int = 0
+    notes: str = ""
+    created_at: str = ""
+    account_label: str = ""
+    base_name: str = ""
+
+    @property
+    def label(self) -> str:
+        bit = self.title or self.target or self.mode or self.kind
+        src = "API" if self.source == "api" else "бот"
+        return f"{src} · {bit}"
+
+
+@dataclass
 class OutreachSettings:
     delay_min: int = 60
     delay_max: int = 120

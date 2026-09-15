@@ -274,6 +274,7 @@ def base_kb(base: ContactBase, total: int, page: int = 0) -> InlineKeyboardMarku
     rows = [
         [toggle],
         [ib("Загрузить", "base_imp", base.id, icon="inbox"), ib("Экспорт", "base_exp", base.id, icon="up")],
+        [ib("Итоговая из этой базы", "col_final", base.id, icon="check")],
         [ib("Удалить базу", "base_del", base.id, icon="warn")],
     ]
     total_pages = max(1, (max(total, 1) + 7) // 8)
@@ -293,18 +294,72 @@ def base_kb(base: ContactBase, total: int, page: int = 0) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def collect_kb(accounts: list[Account] | None = None) -> InlineKeyboardMarkup:
+def collect_kb(accounts: list[Account] | None = None, running: bool = False) -> InlineKeyboardMarkup:
     n = len([a for a in (accounts or []) if a.has_telethon])
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    if running:
+        rows.append([ib("Стоп сбора (сохранить)", "col_stop", icon="down")])
+    rows.extend(
+        [
             [ib("Все участники чата", "col_mode", 0, icon="users")],
             [ib("Только писавшие", "col_mode", 1, icon="search")],
             [ib("Кому писали (ЛС)", "col_dm", 0, icon="mega")],
             [ib("Кто отвечал (ЛС)", "col_dm", 1, icon="term")],
+            [ib("Итоговая база для рассылки", "col_final", icon="check")],
+            [ib("История сбора / скачать", "col_hist", icon="chart")],
             [ib(f"Настройки сбора · акк. {n}", "col_set", icon="hammer")],
             home_row(),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_running_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [ib("Стоп — сохранить базу", "col_stop", icon="down")],
+            home_row(),
+        ]
+    )
+
+
+def collect_history_kb(runs, page: int = 0) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for run in runs:
+        src = "API" if run.source == "api" else "бот"
+        title = (run.base_name or run.title or run.mode or run.kind)[:22]
+        stop = "⏹" if run.stopped else ""
+        rows.append(
+            [
+                ib(
+                    f"#{run.id} {src} {title} ·{run.added}{stop}",
+                    "col_run",
+                    run.id,
+                    icon="folder",
+                )
+            ]
+        )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(ib("Назад", "col_hist", p=page - 1, icon="down"))
+    if len(runs) >= 10:
+        nav.append(ib("Ещё", "col_hist", p=page + 1, icon="up"))
+    if nav:
+        rows.append(nav)
+    rows.append([ib("К сбору", "collect", icon="search")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_run_kb(run) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if run.base_id:
+        rows.append([ib("Скачать txt/csv/xlsx", "col_dl", run.id, icon="up")])
+        rows.append([ib("Открыть базу", "base", run.base_id, icon="users")])
+    rows.append([ib("К истории", "col_hist", icon="chart")])
+    rows.append([ib("К сбору", "collect", icon="search")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def collect_accounts_kb(accounts: list[Account], mode_i: int) -> InlineKeyboardMarkup:
@@ -314,6 +369,19 @@ def collect_accounts_kb(accounts: list[Account], mode_i: int) -> InlineKeyboardM
         rows.append([ib(acc.label[:28], "col_acc", acc.id, p=mode_i, icon="user")])
     if live:
         rows.append([ib("Любой доступный", "col_acc", 0, p=mode_i, icon="robot")])
+    rows.append([ib("Назад", "collect", icon="down")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_chat_accounts_kb(accounts: list[Account], mode_i: int) -> InlineKeyboardMarkup:
+    """Выбор аккаунта для сбора из чата (приватный id работает только у участника)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    live = [a for a in accounts if a.has_telethon]
+    for acc in live[:12]:
+        rows.append([ib(acc.label[:28], "col_chat_acc", acc.id, p=mode_i, icon="user")])
+    if live:
+        rows.append([ib("Все по очереди", "col_chat_acc", 0, p=mode_i, icon="robot")])
     rows.append([ib("Назад", "collect", icon="down")])
     rows.append(home_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)

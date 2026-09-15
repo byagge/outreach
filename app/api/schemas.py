@@ -122,3 +122,8 @@ class CollectDmBody(BaseModel):
     account_id: int | None = None
     base_name: str | None = None
     dialog_limit: int = 500
+
+
+class MailingBaseBody(BaseModel):
+    name: str = "Итоговая рассылка"
+    source_base_id: int | None = None

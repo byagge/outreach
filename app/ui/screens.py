@@ -3,7 +3,17 @@ from __future__ import annotations
 from html import escape
 
 from app.jobs.runtime import runtime
-from app.models import Account, BanContact, Contact, ContactBase, Counts, Proxy, SendRow, TextVariant
+from app.models import (
+    Account,
+    BanContact,
+    CollectRun,
+    Contact,
+    ContactBase,
+    Counts,
+    Proxy,
+    SendRow,
+    TextVariant,
+)
 from app.ui.emoji import pe
 from app.utils.entities import entities_loads
 
@@ -293,16 +303,20 @@ def base_html(base: ContactBase, stats: dict[str, int], preview: list[Contact]) 
     return "\n".join(lines)[:3900]
 
 
-def collect_html(accounts: list[Account] | None = None) -> str:
+def collect_html(accounts: list[Account] | None = None, running: bool = False) -> str:
     live = [a for a in (accounts or []) if a.has_telethon]
+    bg = f"\n{pe('robot')} <b>Сбор идёт</b> — нажмите Стоп, чтобы сохранить уже собранное.\n" if running else "\n"
     return (
-        f"{pe('search')} <b>Сбор базы для рассылки</b>\n\n"
-        f"{pe('users')} <b>Все участники</b> — все из чата → рабочая база.\n"
-        f"{pe('term')} <b>Писавшие</b> — только кто писал в чате.\n"
-        f"{pe('mega')} <b>Кому писали</b> — ЛС, куда уже писали (отдельная база).\n"
-        f"{pe('term')} <b>Кто отвечал</b> — ЛС, откуда отвечали (отдельная база).\n\n"
-        f"{pe('robot')} Доступных аккаунтов: <b>{len(live)}</b>\n"
-        f"{pe('warn')} Банворды — в «Настройки сбора». Совпадения → банбаза."
+        f"{pe('search')} <b>Сбор базы для рассылки</b>{bg}\n"
+        f"{pe('users')} <b>Все участники</b> — все из чата.\n"
+        f"{pe('term')} <b>Писавшие</b> — только кто писал.\n"
+        f"{pe('mega')} <b>Кому писали / Кто отвечал</b> — отдельные базы из ЛС.\n"
+        f"{pe('check')} <b>Итоговая база</b> — без банвордов, «не пишем», "
+        f"«кому писали», sent и дублей.\n"
+        f"{pe('chart')} <b>История сбора</b> — бот и API, скачать txt/csv/xlsx.\n\n"
+        f"{pe('robot')} Аккаунтов: <b>{len(live)}</b>\n"
+        f"{pe('pin')} Приватный чат: id <code>-100…</code> работает, "
+        f"если аккаунт уже состоит в чате (диалоги подгружаются)."
     )
 
 
@@ -320,6 +334,46 @@ def banwords_html(words: list[str], banned: list[BanContact]) -> str:
     if not banned:
         lines.append("<i>пока пусто</i>")
     return "\n".join(lines)[:3900]
+
+
+def collect_history_html(runs: list[CollectRun], page: int = 0) -> str:
+    lines = [
+        f"{pe('chart')} <b>История сбора</b>",
+        f"Бот и API · стр. {page + 1}\n",
+    ]
+    if not runs:
+        lines.append("<i>Пока пусто. Сборы из бота и POST /v1/collect/* появятся здесь.</i>")
+        return "\n".join(lines)
+    for run in runs:
+        src = "API" if run.source == "api" else "бот"
+        mark = pe("down") if run.stopped else pe("check")
+        name = escape(run.base_name or run.title or run.mode or "—")
+        when = escape((run.created_at or "")[:16].replace("T", " "))
+        lines.append(
+            f"{mark} <b>#{run.id}</b> [{escape(src)}] {name}\n"
+            f"   {escape(run.kind)}/{escape(run.mode or '—')} · "
+            f"+{run.added} · бан {run.banned} · {when}"
+        )
+    return "\n".join(lines)[:3900]
+
+
+def collect_run_html(run: CollectRun) -> str:
+    src = "API" if run.source == "api" else "бот"
+    stop = " да" if run.stopped else " нет"
+    return (
+        f"{pe('folder')} <b>Сбор #{run.id}</b>\n\n"
+        f"Источник: <b>{escape(src)}</b>\n"
+        f"Тип: <code>{escape(run.kind)}</code> / <code>{escape(run.mode or '—')}</code>\n"
+        f"Цель: <code>{escape(run.target or '—')}</code>\n"
+        f"Название: <b>{escape(run.title or '—')}</b>\n"
+        f"База: <b>{escape(run.base_name or '—')}</b> "
+        f"<code>#{run.base_id or '—'}</code>\n"
+        f"Аккаунт: <b>{escape(run.account_label or '—')}</b>\n"
+        f"Добавлено: <b>{run.added}</b> · банбаза: <b>{run.banned}</b>\n"
+        f"Остановка: <b>{stop}</b>\n"
+        f"Когда: <code>{escape(run.created_at or '')}</code>\n"
+        f"{pe('pin')} {escape((run.notes or '')[:300])}"
+    )
 
 
 def history_html(jobs, sends: list[SendRow]) -> str:

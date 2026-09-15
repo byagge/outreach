@@ -601,14 +601,14 @@ Pending-контакты с совпадением помечаются `skip`.
 
 | Поле | Описание |
 |------|----------|
-| `chat` | Ссылка или `@username` |
+| `chat` | Ссылка, `@username`, invite или id `-100…` (аккаунт должен быть в чате) |
 | `mode` | `all` — все участники; `writers` — только писавшие |
-| `account_id` | `null` = любой доступный (перебор) |
+| `account_id` | `null` = перебор; для приватных укажите аккаунт-участник |
 | `base_name` | Имя базы; иначе авто |
 
 Банворды применяются автоматически. Совпадения → банбаза, не в рабочую.
 
-**Ответ:** `base`, `added`, `banned`, `account_id`, `notes`.
+**Ответ:** `base`, `added`, `banned`, `stopped`, `account_id`, `notes`.
 
 ---
 
@@ -629,6 +629,37 @@ Pending-контакты с совпадением помечаются `skip`.
 |--------|--------|
 | `messaged` | Кому писали (есть исходящее) |
 | `replied` | Кто отвечал (есть входящее) |
+
+---
+
+### `POST /v1/collect/mailing-base`
+
+Итоговая база для рассылки: pending из включённых баз (или одной `source_base_id`), без дублей, без банбазы / blocklist / «кому писали» / `sent`.
+
+```json
+{
+  "name": "Итоговая рассылка",
+  "source_base_id": null
+}
+```
+
+**Ответ:** `base`, `stats` (`added`, `excluded_ban`, `excluded_block`, `excluded_messaged`, …), `run`.
+
+---
+
+### `GET /v1/collect/history`
+
+Журнал сборов (бот + API). Query: `limit`, `offset`.
+
+**Ответ:** `items[]` — `id`, `source` (`bot`|`api`), `kind`, `mode`, `target`, `title`, `base_id`, `added`, `banned`, `stopped`, `created_at`, …
+
+### `GET /v1/collect/history/{run_id}`
+
+Одна запись журнала.
+
+### `GET /v1/collect/history/{run_id}/export?fmt=txt|csv|xlsx`
+
+Скачать контакты базы этого сбора.
 
 ---
 

@@ -15,6 +15,7 @@ from app.models import (
     Account,
     BanContact,
     BlockEntry,
+    CollectRun,
     Contact,
     ContactBase,
     Counts,
@@ -158,6 +159,22 @@ CREATE TABLE IF NOT EXISTS ban_contacts (
     created_at TEXT NOT NULL,
     UNIQUE(kind, value)
 );
+
+CREATE TABLE IF NOT EXISTS collect_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL DEFAULT 'bot',
+    kind TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    account_id INTEGER,
+    base_id INTEGER,
+    added INTEGER NOT NULL DEFAULT 0,
+    banned INTEGER NOT NULL DEFAULT 0,
+    stopped INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -264,6 +281,27 @@ def _ban_contact(row: aiosqlite.Row) -> BanContact:
         reason=row["reason"] or "",
         source_base_id=row["source_base_id"],
         created_at=row["created_at"] or "",
+    )
+
+
+def _collect_run(row: aiosqlite.Row) -> CollectRun:
+    keys = row.keys()
+    return CollectRun(
+        id=row["id"],
+        source=row["source"] or "bot",
+        kind=row["kind"] or "",
+        mode=row["mode"] or "",
+        target=row["target"] or "",
+        title=row["title"] or "",
+        account_id=row["account_id"],
+        base_id=row["base_id"],
+        added=int(row["added"] or 0),
+        banned=int(row["banned"] or 0),
+        stopped=int(row["stopped"] or 0),
+        notes=row["notes"] or "",
+        created_at=row["created_at"] or "",
+        account_label=(row["account_label"] if "account_label" in keys else "") or "",
+        base_name=(row["base_name"] if "base_name" in keys else "") or "",
     )
 
 
@@ -1222,6 +1260,186 @@ class Store:
                 (per_page, page * per_page),
             )
             return [_ban_contact(r) for r in await cur.fetchall()]
+
+    async def all_ban_contact_keys(self) -> set[tuple[str, str]]:
+        async with self._connect() as db:
+            cur = await db.execute("SELECT kind, value FROM ban_contacts")
+            return {(r[0], str(r[1]).lower()) for r in await cur.fetchall()}
+
+    async def all_blocklist_keys(self) -> set[tuple[str, str]]:
+        async with self._connect() as db:
+            cur = await db.execute("SELECT kind, value FROM blocklist")
+            return {(r[0], str(r[1]).lower()) for r in await cur.fetchall()}
+
+    async def messaged_identity_keys(self) -> set[tuple[str, str]]:
+        """Контакты из баз «кому писали» + уже sent — им больше не пишем."""
+        keys: set[tuple[str, str]] = set()
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT kind, value FROM contacts WHERE status='sent'"
+            )
+            keys.update((r[0], str(r[1]).lower()) for r in await cur.fetchall())
+            cur = await db.execute(
+                "SELECT c.kind, c.value FROM contacts c "
+                "JOIN contact_bases b ON b.id=c.base_id "
+                "WHERE lower(b.name) LIKE 'кому писали%' "
+                "OR lower(b.name) LIKE '%messaged%'"
+            )
+            keys.update((r[0], str(r[1]).lower()) for r in await cur.fetchall())
+        return keys
+
+    async def build_mailing_base(
+        self,
+        *,
+        name: str = "Итоговая рассылка",
+        source_base_id: int | None = None,
+    ) -> tuple[ContactBase, dict[str, int]]:
+        """
+        Чистая база для рассылки:
+        - только pending из включённых баз (или одной source)
+        - без банбазы, blocklist, уже sent / «кому писали»
+        - без дублей (UNIQUE kind+value)
+        """
+        ban = await self.all_ban_contact_keys()
+        block = await self.all_blocklist_keys()
+        messaged = await self.messaged_identity_keys()
+        exclude = ban | block | messaged
+
+        sql = (
+            "SELECT c.* FROM contacts c "
+            "LEFT JOIN contact_bases b ON b.id=c.base_id "
+            "WHERE c.status='pending' "
+        )
+        args: list[Any] = []
+        if source_base_id is not None:
+            sql += "AND c.base_id=? "
+            args.append(source_base_id)
+        else:
+            sql += "AND (c.base_id IS NULL OR b.enabled=1) "
+        sql += "ORDER BY c.id"
+
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(sql, args)
+            rows = await cur.fetchall()
+
+        from app.ai.contacts import Classified
+
+        picked: list[Classified] = []
+        seen: set[tuple[str, str]] = set()
+        skipped = {"ban": 0, "block": 0, "messaged": 0, "dup": 0, "other": 0}
+        for row in rows:
+            c = _contact(row)
+            key = (c.kind, c.value.lower())
+            if key in seen:
+                skipped["dup"] += 1
+                continue
+            if key in ban:
+                skipped["ban"] += 1
+                continue
+            if key in block:
+                skipped["block"] += 1
+                continue
+            if key in messaged:
+                skipped["messaged"] += 1
+                continue
+            if key in exclude:
+                skipped["other"] += 1
+                continue
+            seen.add(key)
+            picked.append(
+                Classified(
+                    c.kind,
+                    c.value,
+                    0.99,
+                    "mailing",
+                    raw=c.raw,
+                    display=c.display or c.pretty,
+                    extra=c.extra,
+                )
+            )
+
+        base = await self.add_base(name[:60])
+        added, dup = await self.add_contacts(picked, base.id)
+        stats = {
+            "added": added,
+            "dup_skip": dup,
+            "excluded_ban": skipped["ban"],
+            "excluded_block": skipped["block"],
+            "excluded_messaged": skipped["messaged"],
+            "source_pending": len(rows),
+        }
+        return base, stats
+
+    async def add_collect_run(
+        self,
+        *,
+        source: str,
+        kind: str,
+        mode: str = "",
+        target: str = "",
+        title: str = "",
+        account_id: int | None = None,
+        base_id: int | None = None,
+        added: int = 0,
+        banned: int = 0,
+        stopped: bool = False,
+        notes: str = "",
+    ) -> CollectRun:
+        now = _now()
+        async with self._connect() as db:
+            cur = await db.execute(
+                "INSERT INTO collect_runs("
+                "source, kind, mode, target, title, account_id, base_id, "
+                "added, banned, stopped, notes, created_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    source,
+                    kind,
+                    mode,
+                    (target or "")[:200],
+                    (title or "")[:120],
+                    account_id,
+                    base_id,
+                    added,
+                    banned,
+                    1 if stopped else 0,
+                    (notes or "")[:2000],
+                    now,
+                ),
+            )
+            await db.commit()
+            pk = int(cur.lastrowid)
+        run = await self.get_collect_run(pk)
+        assert run is not None
+        return run
+
+    async def get_collect_run(self, run_id: int) -> CollectRun | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT r.*, a.label AS account_label, b.name AS base_name "
+                "FROM collect_runs r "
+                "LEFT JOIN accounts a ON a.id=r.account_id "
+                "LEFT JOIN contact_bases b ON b.id=r.base_id "
+                "WHERE r.id=?",
+                (run_id,),
+            )
+            row = await cur.fetchone()
+            return _collect_run(row) if row else None
+
+    async def list_collect_runs(self, limit: int = 40, offset: int = 0) -> list[CollectRun]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT r.*, a.label AS account_label, b.name AS base_name "
+                "FROM collect_runs r "
+                "LEFT JOIN accounts a ON a.id=r.account_id "
+                "LEFT JOIN contact_bases b ON b.id=r.base_id "
+                "ORDER BY r.id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+            return [_collect_run(r) for r in await cur.fetchall()]
 
     async def accounts_for_proxy(self, proxy_id: int) -> list[Account]:
         async with self._connect() as db:
