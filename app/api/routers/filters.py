@@ -60,7 +60,8 @@ async def list_ban_contacts(
     store: Store = Depends(get_store),
 ):
     items = await store.list_ban_contacts(page=page, per_page=per_page)
-    return {"ok": True, "items": to_dict(items)}
+    total = await store.count_ban_contacts()
+    return {"ok": True, "items": to_dict(items), "total": total, "page": page}
 
 
 @router.post("/ban-contacts")
@@ -75,3 +76,17 @@ async def add_ban_contact(body: BanContactAdd, store: Store = Depends(get_store)
     if not ok:
         raise HTTPException(409, "Already in ban base")
     return {"ok": True}
+
+
+@router.delete("/ban-contacts/{ban_id}")
+async def remove_ban_contact(ban_id: int, store: Store = Depends(get_store)):
+    ok = await store.remove_ban_contact(ban_id)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.delete("/ban-contacts")
+async def clear_ban_contacts(store: Store = Depends(get_store)):
+    n = await store.clear_ban_contacts()
+    return {"ok": True, "deleted": n}

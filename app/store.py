@@ -1198,7 +1198,10 @@ class Store:
 
     async def list_banwords(self) -> list[str]:
         async with self._connect() as db:
-            cur = await db.execute("SELECT word FROM banwords ORDER BY word")
+            # выкидываем мусор вроде «r» / «c»
+            await db.execute("DELETE FROM banwords WHERE length(trim(word)) < 3")
+            await db.commit()
+            cur = await db.execute("SELECT word FROM banwords ORDER BY word COLLATE NOCASE")
             return [r[0] for r in await cur.fetchall()]
 
     async def add_banwords(self, words: list[str]) -> tuple[int, int]:
@@ -1208,7 +1211,8 @@ class Store:
         async with self._connect() as db:
             for word in words:
                 w = (word or "").strip()
-                if not w:
+                if len(w) < 3:
+                    skipped += 1
                     continue
                 try:
                     await db.execute(
@@ -1260,6 +1264,34 @@ class Store:
                 (per_page, page * per_page),
             )
             return [_ban_contact(r) for r in await cur.fetchall()]
+
+    async def count_ban_contacts(self) -> int:
+        async with self._connect() as db:
+            cur = await db.execute("SELECT COUNT(*) FROM ban_contacts")
+            row = await cur.fetchone()
+            return int(row[0] or 0)
+
+    async def get_ban_contact(self, ban_id: int) -> BanContact | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM ban_contacts WHERE id=?", (ban_id,))
+            row = await cur.fetchone()
+            return _ban_contact(row) if row else None
+
+    async def remove_ban_contact(self, ban_id: int) -> bool:
+        async with self._connect() as db:
+            cur = await db.execute("DELETE FROM ban_contacts WHERE id=?", (ban_id,))
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def clear_ban_contacts(self) -> int:
+        async with self._connect() as db:
+            cur = await db.execute("SELECT COUNT(*) FROM ban_contacts")
+            row = await cur.fetchone()
+            n = int(row[0] or 0)
+            await db.execute("DELETE FROM ban_contacts")
+            await db.commit()
+            return n
 
     async def all_ban_contact_keys(self) -> set[tuple[str, str]]:
         async with self._connect() as db:

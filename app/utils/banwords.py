@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import re
 
+# «r», «c», «js» и т.п. дают ложные матчи в любом чате
+MIN_BANWORD_LEN = 3
+
+
+def normalize_banword(word: str) -> str:
+    return (word or "").strip()
+
+
+def is_valid_banword(word: str) -> bool:
+    w = normalize_banword(word)
+    return len(w) >= MIN_BANWORD_LEN
+
 
 def contains_banword(text: str, words: list[str]) -> str | None:
     """
     Целое слово/фраза, не подстрока.
-    «dev» не матчит «device»; «код» не матчит «кодекс».
+    Слова короче 3 символов игнорируются.
     """
     if not text or not words:
         return None
     for word in words:
-        w = (word or "").strip()
-        if not w:
+        w = normalize_banword(word)
+        if not is_valid_banword(w):
             continue
-        # слишком короткие (1–2) — только точное целое слово, всё равно через границы
         pattern = r"(?<!\w)" + re.escape(w) + r"(?!\w)"
         if re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE):
             return w

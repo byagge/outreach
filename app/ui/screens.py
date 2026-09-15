@@ -320,8 +320,8 @@ def collect_html(accounts: list[Account] | None = None, running: bool = False) -
     )
 
 
-def banwords_html(words: list[str], banned: list[BanContact], page: int = 0) -> str:
-    per = 20
+def banwords_html(words: list[str], banned_total: int = 0, page: int = 0) -> str:
+    per = 15
     total = len(words)
     pages = max(1, (total + per - 1) // per)
     page = max(0, min(page, pages - 1))
@@ -329,18 +329,34 @@ def banwords_html(words: list[str], banned: list[BanContact], page: int = 0) -> 
     lines = [
         f"{pe('hammer')} <b>Настройки сбора</b>\n\n"
         f"{pe('warn')} <b>Банворды</b> ({total}) · стр. {page + 1}/{pages}\n"
-        f"Матч только <b>целое слово/фраза</b> (не подстрока).\n"
-        f"Совпадение в сообщении → банбаза, не в рассылку.\n",
+        f"Матч — целое слово, <b>от 3 символов</b> (короткие вроде <code>r</code>/<code>c</code> игнор).\n"
+        f"Совпадение в сообщении → банбаза.\n",
     ]
     if chunk:
         lines.append(", ".join(f"<code>{escape(w)}</code>" for w in chunk))
     else:
         lines.append("<i>пусто — добавьте слова</i>")
-    lines.append(f"\n\n{pe('block')} <b>Банбаза</b> (последние)\n")
-    for item in banned[:12]:
-        lines.append(f"{pe('pin')} {escape(item.pretty)} — <i>{escape(item.reason[:40])}</i>")
-    if not banned:
-        lines.append("<i>пока пусто</i>")
+    lines.append(
+        f"\n\n{pe('block')} <b>Банбаза</b>: {banned_total} контактов — "
+        f"откройте кнопку ниже (пагинация, удаление, очистка)."
+    )
+    return "\n".join(lines)[:3900]
+
+
+def banbase_html(items: list[BanContact], total: int, page: int = 0, per: int = 10) -> str:
+    pages = max(1, (total + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    lines = [
+        f"{pe('block')} <b>Банбаза</b> ({total}) · стр. {page + 1}/{pages}\n"
+        f"Сюда попадают из сбора по банвордам. Можно удалить по одному или очистить всё.\n",
+    ]
+    if not items:
+        lines.append("<i>пусто</i>")
+    for item in items:
+        lines.append(
+            f"{pe('pin')} <code>#{item.id}</code> {escape(item.pretty)} — "
+            f"<i>{escape((item.reason or '')[:50])}</i>"
+        )
     return "\n".join(lines)[:3900]
 
 

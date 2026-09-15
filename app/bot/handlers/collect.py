@@ -9,12 +9,14 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.keyboards import (
     MenuCB,
     bases_kb,
+    banbase_kb,
     banwords_kb,
     cancel_kb,
     collect_accounts_kb,
     collect_chat_accounts_kb,
     collect_kb,
     collect_running_kb,
+    confirm_kb,
 )
 from app.bot.render import ask_input, finish_input, safe_edit
 from app.bot.states import Banwords as BanwordsState
@@ -23,7 +25,7 @@ from app.context import ctx
 from app.jobs.runtime import runtime
 from app.tg.client import telethon_client
 from app.tg.collect import CollectResult, collect_dm_history, collect_from_chat
-from app.ui.screens import banwords_html, bases_html, collect_html, prompt_html
+from app.ui.screens import banbase_html, banwords_html, bases_html, collect_html, prompt_html
 
 router = Router()
 
@@ -41,8 +43,20 @@ async def _collect_screen():
 
 async def _settings_screen(page: int = 0):
     words = await ctx.store.list_banwords()
-    banned = await ctx.store.list_ban_contacts(page=0, per_page=15)
-    return banwords_html(words, banned, page=page), banwords_kb(words, page=page)
+    banned_total = await ctx.store.count_ban_contacts()
+    return (
+        banwords_html(words, banned_total=banned_total, page=page),
+        banwords_kb(words, page=page, banned_total=banned_total),
+    )
+
+
+async def _banbase_screen(page: int = 0):
+    per = 10
+    total = await ctx.store.count_ban_contacts()
+    pages = max(1, (total + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    items = await ctx.store.list_ban_contacts(page=page, per_page=per)
+    return banbase_html(items, total, page=page, per=per), banbase_kb(items, total, page=page, per=per)
 
 
 async def _pick_account(account_id: int = 0):
@@ -136,6 +150,48 @@ async def cb_bw_all(query: CallbackQuery) -> None:
         caption=f"Банворды: {len(words)}",
     )
     await query.answer()
+
+
+@router.callback_query(MenuCB.filter(F.a == "bb_view"))
+@router.callback_query(MenuCB.filter(F.a == "bb_page"))
+async def cb_bb_view(query: CallbackQuery, callback_data: MenuCB) -> None:
+    text, markup = await _banbase_screen(page=max(0, callback_data.p))
+    await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "bb_del"))
+async def cb_bb_del(query: CallbackQuery, callback_data: MenuCB) -> None:
+    ok = await ctx.store.remove_ban_contact(callback_data.i)
+    await query.answer("Удалено" if ok else "Уже нет")
+    text, markup = await _banbase_screen(page=max(0, callback_data.p))
+    await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "bb_clr"))
+async def cb_bb_clr(query: CallbackQuery) -> None:
+    total = await ctx.store.count_ban_contacts()
+    await safe_edit(
+        query,
+        prompt_html(
+            "Очистить банбазу",
+            f"Удалить все <b>{total}</b> записей из банбазы?\n"
+            "Банворды (слова) не трогаются.",
+            "warn",
+        ),
+        confirm_kb(
+            MenuCB(a="bb_clr2"),
+            MenuCB(a="bb_view"),
+            yes_text="Очистить всё",
+        ),
+    )
+
+
+@router.callback_query(MenuCB.filter(F.a == "bb_clr2"))
+async def cb_bb_clr2(query: CallbackQuery) -> None:
+    n = await ctx.store.clear_ban_contacts()
+    await query.answer(f"Удалено {n}")
+    text, markup = await _banbase_screen(0)
+    await safe_edit(query, text, markup)
 
 
 @router.callback_query(MenuCB.filter(F.a == "col_stop"))
@@ -523,8 +579,8 @@ async def cb_bw_add(query: CallbackQuery, state: FSMContext) -> None:
     text = prompt_html(
         "Банворды",
         "Пришлите слова через запятую или с новой строки.\n"
-        "Матч — <b>целое слово/фраза</b> (не кусок внутри другого слова).\n"
-        "При сборе: совпадение в сообщении → банбаза.",
+        "Минимум <b>3 символа</b> на слово (<code>r</code>/<code>c</code> не принимаются).\n"
+        "Матч — целое слово/фраза в сообщении → банбаза.",
         "warn",
     )
     await safe_edit(query, text, cancel_kb())
@@ -538,7 +594,9 @@ async def on_bw_add(message: Message, state: FSMContext) -> None:
     await state.clear()
     added, skipped = await ctx.store.add_banwords(words)
     text, markup = await _settings_screen()
-    body = f"Добавлено: <b>{added}</b> · дубли: {skipped}"
+    body = (
+        f"Добавлено: <b>{added}</b> · пропущено (дубли / &lt;3 символов): {skipped}"
+    )
     await finish_input(
         message,
         prompt_html("Банворды", body, "warn") + "\n\n" + text,
