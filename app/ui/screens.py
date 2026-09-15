@@ -320,16 +320,24 @@ def collect_html(accounts: list[Account] | None = None, running: bool = False) -
     )
 
 
-def banwords_html(words: list[str], banned: list[BanContact]) -> str:
+def banwords_html(words: list[str], banned: list[BanContact], page: int = 0) -> str:
+    per = 20
+    total = len(words)
+    pages = max(1, (total + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    chunk = words[page * per : page * per + per]
     lines = [
         f"{pe('hammer')} <b>Настройки сбора</b>\n\n"
-        f"{pe('warn')} <b>Банворды</b> ({len(words)})\n"
-        f"Если в сообщениях пользователя есть эти слова — "
-        f"он не попадает в базу для рассылки, а уходит в банбазу.\n",
-        ", ".join(escape(w) for w in words[:40]) or "<i>пусто — добавьте слова</i>",
-        f"\n\n{pe('block')} <b>Банбаза</b> ({len(banned)})\n",
+        f"{pe('warn')} <b>Банворды</b> ({total}) · стр. {page + 1}/{pages}\n"
+        f"Матч только <b>целое слово/фраза</b> (не подстрока).\n"
+        f"Совпадение в сообщении → банбаза, не в рассылку.\n",
     ]
-    for item in banned[:15]:
+    if chunk:
+        lines.append(", ".join(f"<code>{escape(w)}</code>" for w in chunk))
+    else:
+        lines.append("<i>пусто — добавьте слова</i>")
+    lines.append(f"\n\n{pe('block')} <b>Банбаза</b> (последние)\n")
+    for item in banned[:12]:
         lines.append(f"{pe('pin')} {escape(item.pretty)} — <i>{escape(item.reason[:40])}</i>")
     if not banned:
         lines.append("<i>пока пусто</i>")

@@ -39,10 +39,10 @@ async def _collect_screen():
     return collect_html(accounts, running=running), collect_kb(accounts, running=running)
 
 
-async def _settings_screen():
+async def _settings_screen(page: int = 0):
     words = await ctx.store.list_banwords()
-    banned = await ctx.store.list_ban_contacts()
-    return banwords_html(words, banned), banwords_kb(words)
+    banned = await ctx.store.list_ban_contacts(page=0, per_page=15)
+    return banwords_html(words, banned, page=page), banwords_kb(words, page=page)
 
 
 async def _pick_account(account_id: int = 0):
@@ -110,10 +110,32 @@ async def cb_collect(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(MenuCB.filter(F.a == "col_set"))
 @router.callback_query(MenuCB.filter(F.a == "banwords"))
-async def cb_col_set(query: CallbackQuery, state: FSMContext) -> None:
+async def cb_col_set(query: CallbackQuery, callback_data: MenuCB, state: FSMContext) -> None:
     await state.clear()
-    text, markup = await _settings_screen()
+    text, markup = await _settings_screen(page=callback_data.p)
     await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "bw_page"))
+async def cb_bw_page(query: CallbackQuery, callback_data: MenuCB) -> None:
+    text, markup = await _settings_screen(page=max(0, callback_data.p))
+    await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "bw_all"))
+async def cb_bw_all(query: CallbackQuery) -> None:
+    words = await ctx.store.list_banwords()
+    if not words:
+        await query.answer("Список пуст", show_alert=True)
+        return
+    from aiogram.types import BufferedInputFile
+
+    body = "\n".join(words)
+    await query.message.answer_document(
+        BufferedInputFile(body.encode("utf-8"), filename="banwords.txt"),
+        caption=f"Банворды: {len(words)}",
+    )
+    await query.answer()
 
 
 @router.callback_query(MenuCB.filter(F.a == "col_stop"))
@@ -501,7 +523,8 @@ async def cb_bw_add(query: CallbackQuery, state: FSMContext) -> None:
     text = prompt_html(
         "Банворды",
         "Пришлите слова через запятую или с новой строки.\n"
-        "При сборе: совпадение → банбаза, не в рассылку.",
+        "Матч — <b>целое слово/фраза</b> (не кусок внутри другого слова).\n"
+        "При сборе: совпадение в сообщении → банбаза.",
         "warn",
     )
     await safe_edit(query, text, cancel_kb())
@@ -527,10 +550,11 @@ async def on_bw_add(message: Message, state: FSMContext) -> None:
 async def cb_bw_del(query: CallbackQuery, callback_data: MenuCB) -> None:
     words = await ctx.store.list_banwords()
     idx = callback_data.i
+    page = callback_data.p
     if idx < 0 or idx >= len(words):
         await query.answer("Нет слова")
         return
     await ctx.store.remove_banword(words[idx])
     await query.answer("Удалено")
-    text, markup = await _settings_screen()
+    text, markup = await _settings_screen(page=page)
     await safe_edit(query, text, markup)

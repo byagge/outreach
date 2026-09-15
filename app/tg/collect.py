@@ -39,7 +39,8 @@ def _add(
     if key in seen:
         return
     seen.add(key)
-    hit = contains_banword(text_blob or item.raw or item.display or "", banwords)
+    # Банворды только по тексту сообщений, не по @username / user_id
+    hit = contains_banword(text_blob, banwords) if text_blob.strip() else None
     if hit:
         result.banned.append(item)
         result.banned_reasons[f"{item.kind}:{item.value}"] = f"banword: {hit}"
@@ -179,12 +180,29 @@ async def collect_from_chat(
             user = user_map.get(uid)
             if not user:
                 continue
-            _add(result, seen, _user_classified(user), banwords=words, text_blob="\n".join(texts))
+            # каждое сообщение отдельно — не склеиваем в один супер-текст
+            hit_word: str | None = None
+            for msg_text in texts:
+                hit_word = contains_banword(msg_text, words)
+                if hit_word:
+                    break
+            item = _user_classified(user)
+            if not item:
+                continue
+            key = _key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            if hit_word:
+                result.banned.append(item)
+                result.banned_reasons[f"{item.kind}:{item.value}"] = f"banword: {hit_word}"
+            else:
+                result.contacts.append(item)
         tag = "остановлено" if result.stopped else "готово"
         result.notes.append(f"режим: писавшие ({len(result.contacts)}) [{tag}]")
         return result
 
-    banned_ids: set[int] = set()
+    banned_ids: dict[int, str] = {}
     if words:
         n = 0
         async for msg in client.iter_messages(entity, limit=8000):
@@ -199,7 +217,7 @@ async def collect_from_chat(
                 continue
             sender = await msg.get_sender()
             if isinstance(sender, User) and not sender.bot:
-                banned_ids.add(sender.id)
+                banned_ids.setdefault(sender.id, hit)
 
     n = 0
     async for user in client.iter_participants(entity):
@@ -222,7 +240,9 @@ async def collect_from_chat(
         seen.add(key)
         if user.id in banned_ids:
             result.banned.append(item)
-            result.banned_reasons[f"{item.kind}:{item.value}"] = "banword in chat history"
+            result.banned_reasons[f"{item.kind}:{item.value}"] = (
+                f"banword: {banned_ids[user.id]}"
+            )
             continue
         result.contacts.append(item)
 

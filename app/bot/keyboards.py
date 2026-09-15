@@ -387,12 +387,28 @@ def collect_chat_accounts_kb(accounts: list[Account], mode_i: int) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def banwords_kb(words: list[str] | None = None) -> InlineKeyboardMarkup:
+def banwords_kb(words: list[str] | None = None, page: int = 0) -> InlineKeyboardMarkup:
+    words = words or []
+    per = 20
+    total = len(words)
+    pages = max(1, (total + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    chunk = words[page * per : page * per + per]
     rows: list[list[InlineKeyboardButton]] = [
         [ib("Добавить банворды", "bw_add", icon="inbox")],
+        [ib(f"Скачать все ({total})", "bw_all", icon="up")],
     ]
-    for i, word in enumerate((words or [])[:20]):
-        rows.append([ib(f"✕ {word[:28]}", "bw_del", i, icon="block")])
+    for i, word in enumerate(chunk):
+        abs_i = page * per + i
+        rows.append([ib(f"✕ {word[:28]}", "bw_del", abs_i, p=page, icon="block")])
+    if pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(ib("«", "bw_page", p=page - 1, icon="down"))
+        nav.append(ib(f"{page + 1}/{pages}", "bw_page", p=page, icon="stack"))
+        if page + 1 < pages:
+            nav.append(ib("»", "bw_page", p=page + 1, icon="up"))
+        rows.append(nav)
     rows.append([ib("Назад к сбору", "collect", icon="down")])
     rows.append(home_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
