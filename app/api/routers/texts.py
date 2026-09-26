@@ -65,9 +65,31 @@ async def create_text_with_photo(
 @router.patch("/{text_id}")
 async def update_text(text_id: int, body: TextUpdate, store: Store = Depends(get_store)):
     data = body.model_dump(exclude_none=True)
+    if "entities" in data and "entities_json" not in data:
+        import json
+
+        data["entities_json"] = json.dumps(data.pop("entities"), ensure_ascii=False)
+    elif "entities" in data:
+        data.pop("entities")
     item = await store.update_text(text_id, **data)
     if not item:
         raise HTTPException(404, "Text not found")
+    return {"ok": True, "text": to_dict(item)}
+
+
+@router.post("/{text_id}/upload")
+async def update_text_photo(
+    text_id: int,
+    file: UploadFile = File(...),
+    store: Store = Depends(get_store),
+):
+    item = await store.get_text(text_id)
+    if not item:
+        raise HTTPException(404, "Text not found")
+    dest = TEXTS_DIR / f"api_{text_id}_{file.filename or 'photo.jpg'}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(await file.read())
+    item = await store.update_text(text_id, photo_path=str(dest))
     return {"ok": True, "text": to_dict(item)}
 
 

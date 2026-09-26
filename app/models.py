@@ -59,11 +59,28 @@ class ContactBase:
     id: int
     name: str
     enabled: int = 1
+    isolated: int = 0  # 1 = отдельная база, не в основной рассылке
     created_at: str = ""
 
     @property
     def on(self) -> bool:
         return bool(self.enabled)
+
+    @property
+    def is_isolated(self) -> bool:
+        return bool(self.isolated)
+
+
+@dataclass
+class Campaign:
+    id: int
+    name: str
+    is_main: int = 0
+    created_at: str = ""
+
+    @property
+    def main(self) -> bool:
+        return bool(self.is_main)
 
 
 @dataclass
@@ -117,6 +134,8 @@ class SendRow:
     created_at: str = ""
     contact_pretty: str = ""
     account_label: str = ""
+    campaign_id: int | None = None
+    campaign_name: str = ""
 
 
 @dataclass
@@ -129,6 +148,8 @@ class Job:
     finished_at: str = ""
     report: str = ""
     account_label: str = ""
+    campaign_id: int | None = None
+    campaign_name: str = ""
 
 
 @dataclass

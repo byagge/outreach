@@ -29,7 +29,7 @@ async def _payload(acc):
 async def cb_accounts(query: CallbackQuery, callback_data: MenuCB, state: FSMContext) -> None:
     await state.clear()
     accounts = await ctx.store.list_accounts()
-    await safe_edit(query, accounts_html(accounts), accounts_kb(accounts, callback_data.p))
+    await safe_edit(query, accounts_html(accounts, page=callback_data.p), accounts_kb(accounts, callback_data.p))
 
 
 @router.callback_query(MenuCB.filter(F.a == "acc"))
@@ -225,7 +225,7 @@ async def cb_del(query: CallbackQuery, callback_data: MenuCB) -> None:
 async def cb_del2(query: CallbackQuery, callback_data: MenuCB) -> None:
     await ctx.store.delete_account(callback_data.i)
     accounts = await ctx.store.list_accounts()
-    await safe_edit(query, accounts_html(accounts), accounts_kb(accounts))
+    await safe_edit(query, accounts_html(accounts, page=0), accounts_kb(accounts, 0))
 
 
 @router.callback_query(MenuCB.filter(F.a == "acc_wh"))

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import (
     accounts,
     bases,
+    campaigns,
     collect,
     contacts,
     filters,
@@ -36,8 +37,11 @@ def create_app() -> FastAPI:
     cfg = get_settings()
     app = FastAPI(
         title="Outreach API",
-        version="2.1.0",
-        description="Полный HTTP API системы outreach (аккаунты, базы, прокси, рассылка, сбор).",
+        version="2.2.0",
+        description=(
+            "HTTP API outreach: аккаунты, базы, прокси, офферы, сбор, "
+            "кампании (отдельные базы/аккаунты/офферы), рассылка, история."
+        ),
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -58,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(bases.router, prefix="/v1")
     app.include_router(contacts.router, prefix="/v1")
     app.include_router(texts.router, prefix="/v1")
+    app.include_router(campaigns.router, prefix="/v1")
     app.include_router(filters.router, prefix="/v1")
     app.include_router(collect.router, prefix="/v1")
     app.include_router(run.router, prefix="/v1")
@@ -68,6 +73,7 @@ def create_app() -> FastAPI:
         return {
             "ok": True,
             "service": "outreach-api",
+            "version": "2.2.0",
             "docs": "/docs",
             "public_url": cfg.api_public_url,
             "api_prefix": "/v1",

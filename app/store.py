@@ -15,6 +15,7 @@ from app.models import (
     Account,
     BanContact,
     BlockEntry,
+    Campaign,
     CollectRun,
     Contact,
     ContactBase,
@@ -131,7 +132,33 @@ CREATE TABLE IF NOT EXISTS contact_bases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
+    isolated INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    is_main INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS campaign_bases (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    base_id INTEGER NOT NULL REFERENCES contact_bases(id) ON DELETE CASCADE,
+    PRIMARY KEY (campaign_id, base_id)
+);
+
+CREATE TABLE IF NOT EXISTS campaign_accounts (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    PRIMARY KEY (campaign_id, account_id)
+);
+
+CREATE TABLE IF NOT EXISTS campaign_texts (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    text_id INTEGER NOT NULL REFERENCES texts(id) ON DELETE CASCADE,
+    PRIMARY KEY (campaign_id, text_id)
 );
 
 CREATE TABLE IF NOT EXISTS blocklist (
@@ -254,10 +281,21 @@ def _contact(row: aiosqlite.Row) -> Contact:
 
 
 def _base(row: aiosqlite.Row) -> ContactBase:
+    keys = row.keys()
     return ContactBase(
         id=row["id"],
         name=row["name"] or "",
         enabled=int(row["enabled"] or 0),
+        isolated=int(row["isolated"] or 0) if "isolated" in keys else 0,
+        created_at=row["created_at"] or "",
+    )
+
+
+def _campaign(row: aiosqlite.Row) -> Campaign:
+    return Campaign(
+        id=row["id"],
+        name=row["name"] or "",
+        is_main=int(row["is_main"] or 0),
         created_at=row["created_at"] or "",
     )
 
@@ -355,6 +393,28 @@ class Store:
         if "base_id" not in ct_cols:
             await db.execute("ALTER TABLE contacts ADD COLUMN base_id INTEGER")
 
+        base_cols = await _cols("contact_bases")
+        if "isolated" not in base_cols:
+            await db.execute(
+                "ALTER TABLE contact_bases ADD COLUMN isolated INTEGER NOT NULL DEFAULT 0"
+            )
+
+        job_cols = await _cols("jobs")
+        if "campaign_id" not in job_cols:
+            await db.execute("ALTER TABLE jobs ADD COLUMN campaign_id INTEGER")
+        if "campaign_name" not in job_cols:
+            await db.execute(
+                "ALTER TABLE jobs ADD COLUMN campaign_name TEXT NOT NULL DEFAULT ''"
+            )
+
+        send_cols = await _cols("sends")
+        if "campaign_id" not in send_cols:
+            await db.execute("ALTER TABLE sends ADD COLUMN campaign_id INTEGER")
+        if "campaign_name" not in send_cols:
+            await db.execute(
+                "ALTER TABLE sends ADD COLUMN campaign_name TEXT NOT NULL DEFAULT ''"
+            )
+
         cur = await db.execute("SELECT COUNT(*) FROM contact_bases")
         row = await cur.fetchone()
         if not row or int(row[0] or 0) == 0:
@@ -370,6 +430,14 @@ class Store:
                     "UPDATE contacts SET base_id=? WHERE base_id IS NULL",
                     (base_row[0],),
                 )
+
+        cur = await db.execute("SELECT COUNT(*) FROM campaigns WHERE is_main=1")
+        row = await cur.fetchone()
+        if not row or int(row[0] or 0) == 0:
+            await db.execute(
+                "INSERT INTO campaigns(name, is_main, created_at) VALUES(?,?,?)",
+                ("Основной", 1, _now()),
+            )
 
     @asynccontextmanager
     async def _connect(self):
@@ -451,7 +519,8 @@ class Store:
             pending_sql = (
                 "SELECT COUNT(*) FROM contacts c "
                 "LEFT JOIN contact_bases b ON b.id=c.base_id "
-                "WHERE c.status='pending' AND (c.base_id IS NULL OR b.enabled=1) "
+                "WHERE c.status='pending' "
+                "AND (c.base_id IS NULL OR (b.enabled=1 AND COALESCE(b.isolated,0)=0)) "
                 "AND NOT EXISTS (SELECT 1 FROM blocklist bl WHERE bl.kind=c.kind AND bl.value=c.value) "
                 "AND NOT EXISTS (SELECT 1 FROM ban_contacts bc WHERE bc.kind=c.kind AND bc.value=c.value)"
             )
@@ -756,19 +825,44 @@ class Store:
             await db.commit()
         return added, skipped
 
-    async def claim_contact(self) -> Contact | None:
+    async def claim_contact(
+        self,
+        *,
+        base_ids: list[int] | None = None,
+        mailing_only: bool = True,
+    ) -> Contact | None:
+        """
+        Забрать следующий pending-контакт.
+        mailing_only=True — только включённые не-isolated базы (основная рассылка).
+        base_ids — явный список баз (кампания); mailing_only игнорируется.
+        """
         async with self._claim_lock:
             async with self._connect() as db:
                 db.row_factory = aiosqlite.Row
-                cur = await db.execute(
+                sql = (
                     "SELECT c.* FROM contacts c "
                     "LEFT JOIN contact_bases b ON b.id=c.base_id "
                     "WHERE c.status='pending' "
-                    "AND (c.base_id IS NULL OR b.enabled=1) "
+                )
+                args: list[Any] = []
+                if base_ids is not None:
+                    if not base_ids:
+                        return None
+                    placeholders = ",".join("?" * len(base_ids))
+                    sql += f"AND c.base_id IN ({placeholders}) "
+                    args.extend(base_ids)
+                elif mailing_only:
+                    sql += (
+                        "AND (c.base_id IS NULL OR (b.enabled=1 AND COALESCE(b.isolated,0)=0)) "
+                    )
+                else:
+                    sql += "AND (c.base_id IS NULL OR b.enabled=1) "
+                sql += (
                     "AND NOT EXISTS (SELECT 1 FROM blocklist bl WHERE bl.kind=c.kind AND bl.value=c.value) "
                     "AND NOT EXISTS (SELECT 1 FROM ban_contacts bc WHERE bc.kind=c.kind AND bc.value=c.value) "
                     "ORDER BY c.id LIMIT 1"
                 )
+                cur = await db.execute(sql, args)
                 row = await cur.fetchone()
                 if not row:
                     return None
@@ -783,6 +877,39 @@ class Store:
                 cur = await db.execute("SELECT * FROM contacts WHERE id=?", (row["id"],))
                 fresh = await cur.fetchone()
         return _contact(fresh) if fresh else None
+
+    async def count_pending(
+        self,
+        *,
+        base_ids: list[int] | None = None,
+        mailing_only: bool = True,
+    ) -> int:
+        async with self._connect() as db:
+            sql = (
+                "SELECT COUNT(*) FROM contacts c "
+                "LEFT JOIN contact_bases b ON b.id=c.base_id "
+                "WHERE c.status='pending' "
+            )
+            args: list[Any] = []
+            if base_ids is not None:
+                if not base_ids:
+                    return 0
+                placeholders = ",".join("?" * len(base_ids))
+                sql += f"AND c.base_id IN ({placeholders}) "
+                args.extend(base_ids)
+            elif mailing_only:
+                sql += (
+                    "AND (c.base_id IS NULL OR (b.enabled=1 AND COALESCE(b.isolated,0)=0)) "
+                )
+            else:
+                sql += "AND (c.base_id IS NULL OR b.enabled=1) "
+            sql += (
+                "AND NOT EXISTS (SELECT 1 FROM blocklist bl WHERE bl.kind=c.kind AND bl.value=c.value) "
+                "AND NOT EXISTS (SELECT 1 FROM ban_contacts bc WHERE bc.kind=c.kind AND bc.value=c.value)"
+            )
+            cur = await db.execute(sql, args)
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
 
     async def finish_contact(
         self,
@@ -883,6 +1010,9 @@ class Store:
         return item
 
     async def update_text(self, text_id: int, **fields: Any) -> TextVariant | None:
+        if "entities" in fields and "entities_json" not in fields:
+            ents = fields.pop("entities")
+            fields["entities_json"] = json.dumps(ents or [], ensure_ascii=False)
         allowed = {"title", "text", "entities_json", "photo_path", "enabled"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:
@@ -908,12 +1038,25 @@ class Store:
         proxy_id: int | None,
         status: str,
         detail: str = "",
+        campaign_id: int | None = None,
+        campaign_name: str = "",
     ) -> None:
         async with self._connect() as db:
             await db.execute(
-                "INSERT INTO sends(contact_id, account_id, text_id, proxy_id, status, detail, created_at) "
-                "VALUES(?,?,?,?,?,?,?)",
-                (contact_id, account_id, text_id, proxy_id, status, detail, _now()),
+                "INSERT INTO sends(contact_id, account_id, text_id, proxy_id, status, detail, "
+                "created_at, campaign_id, campaign_name) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    contact_id,
+                    account_id,
+                    text_id,
+                    proxy_id,
+                    status,
+                    detail,
+                    _now(),
+                    campaign_id,
+                    campaign_name or "",
+                ),
             )
             await db.commit()
 
@@ -931,27 +1074,40 @@ class Store:
                 (limit, offset),
             )
             rows = await cur.fetchall()
-        return [
-            SendRow(
-                id=r["id"],
-                contact_id=r["contact_id"],
-                account_id=r["account_id"],
-                text_id=r["text_id"],
-                proxy_id=r["proxy_id"],
-                status=r["status"],
-                detail=r["detail"] or "",
-                created_at=r["created_at"] or "",
-                contact_pretty=r["contact_pretty"] or "",
-                account_label=r["account_label"] or "",
+        result: list[SendRow] = []
+        for r in rows:
+            keys = r.keys()
+            result.append(
+                SendRow(
+                    id=r["id"],
+                    contact_id=r["contact_id"],
+                    account_id=r["account_id"],
+                    text_id=r["text_id"],
+                    proxy_id=r["proxy_id"],
+                    status=r["status"],
+                    detail=r["detail"] or "",
+                    created_at=r["created_at"] or "",
+                    contact_pretty=r["contact_pretty"] or "",
+                    account_label=r["account_label"] or "",
+                    campaign_id=r["campaign_id"] if "campaign_id" in keys else None,
+                    campaign_name=(r["campaign_name"] if "campaign_name" in keys else "") or "",
+                )
             )
-            for r in rows
-        ]
+        return result
 
-    async def create_job(self, kind: str, account_id: int | None) -> Job:
+    async def create_job(
+        self,
+        kind: str,
+        account_id: int | None,
+        *,
+        campaign_id: int | None = None,
+        campaign_name: str = "",
+    ) -> Job:
         async with self._connect() as db:
             cur = await db.execute(
-                "INSERT INTO jobs(account_id, kind, status, started_at) VALUES(?,?,?,?)",
-                (account_id, kind, "running", _now()),
+                "INSERT INTO jobs(account_id, kind, status, started_at, campaign_id, campaign_name) "
+                "VALUES(?,?,?,?,?,?)",
+                (account_id, kind, "running", _now(), campaign_id, campaign_name or ""),
             )
             await db.commit()
             pk = cur.lastrowid
@@ -970,6 +1126,7 @@ class Store:
             row = await cur.fetchone()
         if not row:
             return None
+        keys = row.keys()
         return Job(
             id=row["id"],
             account_id=row["account_id"],
@@ -979,6 +1136,8 @@ class Store:
             finished_at=row["finished_at"] or "",
             report=row["report"] or "",
             account_label=row["account_label"] or "",
+            campaign_id=row["campaign_id"] if "campaign_id" in keys else None,
+            campaign_name=(row["campaign_name"] if "campaign_name" in keys else "") or "",
         )
 
     async def finish_job(self, job_id: int, status: str, report: str = "") -> None:
@@ -1026,19 +1185,24 @@ class Store:
                 (limit,),
             )
             rows = await cur.fetchall()
-        return [
-            Job(
-                id=r["id"],
-                account_id=r["account_id"],
-                kind=r["kind"],
-                status=r["status"],
-                started_at=r["started_at"] or "",
-                finished_at=r["finished_at"] or "",
-                report=r["report"] or "",
-                account_label=r["account_label"] or "",
+        result: list[Job] = []
+        for r in rows:
+            keys = r.keys()
+            result.append(
+                Job(
+                    id=r["id"],
+                    account_id=r["account_id"],
+                    kind=r["kind"],
+                    status=r["status"],
+                    started_at=r["started_at"] or "",
+                    finished_at=r["finished_at"] or "",
+                    report=r["report"] or "",
+                    account_label=r["account_label"] or "",
+                    campaign_id=r["campaign_id"] if "campaign_id" in keys else None,
+                    campaign_name=(r["campaign_name"] if "campaign_name" in keys else "") or "",
+                )
             )
-            for r in rows
-        ]
+        return result
 
     async def default_base_id(self) -> int:
         bases = await self.list_bases()
@@ -1047,8 +1211,8 @@ class Store:
         now = _now()
         async with self._connect() as db:
             cur = await db.execute(
-                "INSERT INTO contact_bases(name, enabled, created_at) VALUES(?,?,?)",
-                ("Основная", 1, now),
+                "INSERT INTO contact_bases(name, enabled, isolated, created_at) VALUES(?,?,?,?)",
+                ("Основная", 1, 0, now),
             )
             await db.commit()
             return int(cur.lastrowid)
@@ -1066,18 +1230,38 @@ class Store:
             row = await cur.fetchone()
             return _base(row) if row else None
 
-    async def add_base(self, name: str) -> ContactBase:
+    async def add_base(
+        self, name: str, *, isolated: int = 0, enabled: int = 1
+    ) -> ContactBase:
         now = _now()
         async with self._connect() as db:
             cur = await db.execute(
-                "INSERT INTO contact_bases(name, enabled, created_at) VALUES(?,?,?)",
-                (name.strip(), 1, now),
+                "INSERT INTO contact_bases(name, enabled, isolated, created_at) VALUES(?,?,?,?)",
+                (name.strip(), int(enabled), int(isolated), now),
             )
             await db.commit()
             pk = int(cur.lastrowid)
         base = await self.get_base(pk)
         assert base is not None
         return base
+
+    async def set_base_isolated(self, base_id: int, isolated: int) -> ContactBase | None:
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE contact_bases SET isolated=? WHERE id=?",
+                (1 if isolated else 0, base_id),
+            )
+            await db.commit()
+        return await self.get_base(base_id)
+
+    async def set_base_enabled(self, base_id: int, enabled: int) -> ContactBase | None:
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE contact_bases SET enabled=? WHERE id=?",
+                (1 if enabled else 0, base_id),
+            )
+            await db.commit()
+        return await self.get_base(base_id)
 
     async def toggle_base(self, base_id: int) -> ContactBase | None:
         base = await self.get_base(base_id)
@@ -1347,7 +1531,7 @@ class Store:
             sql += "AND c.base_id=? "
             args.append(source_base_id)
         else:
-            sql += "AND (c.base_id IS NULL OR b.enabled=1) "
+            sql += "AND (c.base_id IS NULL OR (b.enabled=1 AND COALESCE(b.isolated,0)=0)) "
         sql += "ORDER BY c.id"
 
         async with self._connect() as db:
@@ -1483,3 +1667,272 @@ class Store:
                 (proxy_id,),
             )
             return [_account(r) for r in await cur.fetchall()]
+
+    # ── campaigns ──────────────────────────────────────────────
+
+    async def list_campaigns(self) -> list[Campaign]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT * FROM campaigns ORDER BY is_main DESC, id"
+            )
+            return [_campaign(r) for r in await cur.fetchall()]
+
+    async def get_campaign(self, campaign_id: int) -> Campaign | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,))
+            row = await cur.fetchone()
+            return _campaign(row) if row else None
+
+    async def get_main_campaign(self) -> Campaign:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT * FROM campaigns WHERE is_main=1 ORDER BY id LIMIT 1"
+            )
+            row = await cur.fetchone()
+            if row:
+                return _campaign(row)
+            await db.execute(
+                "INSERT INTO campaigns(name, is_main, created_at) VALUES(?,?,?)",
+                ("Основной", 1, _now()),
+            )
+            await db.commit()
+            cur = await db.execute(
+                "SELECT * FROM campaigns WHERE is_main=1 ORDER BY id LIMIT 1"
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            return _campaign(row)
+
+    async def add_campaign(self, name: str) -> Campaign:
+        now = _now()
+        async with self._connect() as db:
+            cur = await db.execute(
+                "INSERT INTO campaigns(name, is_main, created_at) VALUES(?,?,?)",
+                (name.strip()[:60] or "Кампания", 0, now),
+            )
+            await db.commit()
+            pk = int(cur.lastrowid)
+        camp = await self.get_campaign(pk)
+        assert camp is not None
+        return camp
+
+    async def rename_campaign(self, campaign_id: int, name: str) -> Campaign | None:
+        camp = await self.get_campaign(campaign_id)
+        if not camp or camp.is_main:
+            return camp
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE campaigns SET name=? WHERE id=? AND is_main=0",
+                (name.strip()[:60], campaign_id),
+            )
+            await db.commit()
+        return await self.get_campaign(campaign_id)
+
+    async def delete_campaign(self, campaign_id: int) -> bool:
+        camp = await self.get_campaign(campaign_id)
+        if not camp or camp.is_main:
+            return False
+        async with self._connect() as db:
+            await db.execute("DELETE FROM campaign_bases WHERE campaign_id=?", (campaign_id,))
+            await db.execute(
+                "DELETE FROM campaign_accounts WHERE campaign_id=?", (campaign_id,)
+            )
+            await db.execute("DELETE FROM campaign_texts WHERE campaign_id=?", (campaign_id,))
+            await db.execute("DELETE FROM campaigns WHERE id=? AND is_main=0", (campaign_id,))
+            await db.commit()
+        return True
+
+    async def campaign_base_ids(self, campaign_id: int) -> list[int]:
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT base_id FROM campaign_bases WHERE campaign_id=? ORDER BY base_id",
+                (campaign_id,),
+            )
+            return [int(r[0]) for r in await cur.fetchall()]
+
+    async def campaign_account_ids(self, campaign_id: int) -> list[int]:
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT account_id FROM campaign_accounts WHERE campaign_id=? ORDER BY account_id",
+                (campaign_id,),
+            )
+            return [int(r[0]) for r in await cur.fetchall()]
+
+    async def campaign_text_ids(self, campaign_id: int) -> list[int]:
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT text_id FROM campaign_texts WHERE campaign_id=? ORDER BY text_id",
+                (campaign_id,),
+            )
+            return [int(r[0]) for r in await cur.fetchall()]
+
+    async def toggle_campaign_base(self, campaign_id: int, base_id: int) -> bool:
+        """True если база теперь привязана."""
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT 1 FROM campaign_bases WHERE campaign_id=? AND base_id=?",
+                (campaign_id, base_id),
+            )
+            exists = await cur.fetchone()
+            if exists:
+                await db.execute(
+                    "DELETE FROM campaign_bases WHERE campaign_id=? AND base_id=?",
+                    (campaign_id, base_id),
+                )
+                await db.commit()
+                return False
+            await db.execute(
+                "INSERT INTO campaign_bases(campaign_id, base_id) VALUES(?,?)",
+                (campaign_id, base_id),
+            )
+            await db.commit()
+            return True
+
+    async def toggle_campaign_account(self, campaign_id: int, account_id: int) -> bool:
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT 1 FROM campaign_accounts WHERE campaign_id=? AND account_id=?",
+                (campaign_id, account_id),
+            )
+            exists = await cur.fetchone()
+            if exists:
+                await db.execute(
+                    "DELETE FROM campaign_accounts WHERE campaign_id=? AND account_id=?",
+                    (campaign_id, account_id),
+                )
+                await db.commit()
+                return False
+            await db.execute(
+                "INSERT INTO campaign_accounts(campaign_id, account_id) VALUES(?,?)",
+                (campaign_id, account_id),
+            )
+            await db.commit()
+            return True
+
+    async def toggle_campaign_text(self, campaign_id: int, text_id: int) -> bool:
+        async with self._connect() as db:
+            cur = await db.execute(
+                "SELECT 1 FROM campaign_texts WHERE campaign_id=? AND text_id=?",
+                (campaign_id, text_id),
+            )
+            exists = await cur.fetchone()
+            if exists:
+                await db.execute(
+                    "DELETE FROM campaign_texts WHERE campaign_id=? AND text_id=?",
+                    (campaign_id, text_id),
+                )
+                await db.commit()
+                return False
+            await db.execute(
+                "INSERT INTO campaign_texts(campaign_id, text_id) VALUES(?,?)",
+                (campaign_id, text_id),
+            )
+            await db.commit()
+            return True
+
+    async def assign_base_to_campaign(self, base_id: int, campaign_id: int) -> str:
+        """
+        Назначить отдельную базу в кампанию.
+        Возвращает короткое описание результата.
+        """
+        camp = await self.get_campaign(campaign_id)
+        base = await self.get_base(base_id)
+        if not camp or not base:
+            return "не найдено"
+        if camp.is_main:
+            await self.set_base_isolated(base_id, 0)
+            await self.set_base_enabled(base_id, 1)
+            return f"база «{base.name}» → Основной (включена в рассылку)"
+        async with self._connect() as db:
+            try:
+                await db.execute(
+                    "INSERT INTO campaign_bases(campaign_id, base_id) VALUES(?,?)",
+                    (campaign_id, base_id),
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                pass
+        # остаётся isolated — основная очередь её не берёт
+        await self.set_base_isolated(base_id, 1)
+        return f"база «{base.name}» → кампания «{camp.name}»"
+
+    async def list_texts_by_ids(self, text_ids: list[int]) -> list[TextVariant]:
+        if not text_ids:
+            return []
+        placeholders = ",".join("?" * len(text_ids))
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                f"SELECT * FROM texts WHERE id IN ({placeholders}) ORDER BY id",
+                text_ids,
+            )
+            return [_text(r) for r in await cur.fetchall()]
+
+    async def set_campaign_bases(self, campaign_id: int, base_ids: list[int]) -> list[int]:
+        unique = sorted({int(x) for x in base_ids})
+        async with self._connect() as db:
+            await db.execute("DELETE FROM campaign_bases WHERE campaign_id=?", (campaign_id,))
+            for bid in unique:
+                await db.execute(
+                    "INSERT INTO campaign_bases(campaign_id, base_id) VALUES(?,?)",
+                    (campaign_id, bid),
+                )
+            await db.commit()
+        return unique
+
+    async def set_campaign_accounts(self, campaign_id: int, account_ids: list[int]) -> list[int]:
+        unique = sorted({int(x) for x in account_ids})
+        async with self._connect() as db:
+            await db.execute(
+                "DELETE FROM campaign_accounts WHERE campaign_id=?", (campaign_id,)
+            )
+            for aid in unique:
+                await db.execute(
+                    "INSERT INTO campaign_accounts(campaign_id, account_id) VALUES(?,?)",
+                    (campaign_id, aid),
+                )
+            await db.commit()
+        return unique
+
+    async def set_campaign_texts(self, campaign_id: int, text_ids: list[int]) -> list[int]:
+        unique = sorted({int(x) for x in text_ids})
+        async with self._connect() as db:
+            await db.execute("DELETE FROM campaign_texts WHERE campaign_id=?", (campaign_id,))
+            for tid in unique:
+                await db.execute(
+                    "INSERT INTO campaign_texts(campaign_id, text_id) VALUES(?,?)",
+                    (campaign_id, tid),
+                )
+            await db.commit()
+        return unique
+
+    async def campaign_detail(self, campaign_id: int) -> dict[str, Any] | None:
+        camp = await self.get_campaign(campaign_id)
+        if not camp:
+            return None
+        base_ids = await self.campaign_base_ids(campaign_id)
+        account_ids = await self.campaign_account_ids(campaign_id)
+        text_ids = await self.campaign_text_ids(campaign_id)
+        if camp.is_main:
+            pending = await self.count_pending(mailing_only=True)
+            running = False  # caller fills from runtime
+        else:
+            pending = await self.count_pending(base_ids=base_ids, mailing_only=False)
+            running = False
+        bases = [b for b in await self.list_bases() if b.id in set(base_ids)]
+        accounts = [a for a in await self.list_accounts() if a.id in set(account_ids)]
+        texts = await self.list_texts_by_ids(text_ids)
+        return {
+            "campaign": camp,
+            "base_ids": base_ids,
+            "account_ids": account_ids,
+            "text_ids": text_ids,
+            "bases": bases,
+            "accounts": accounts,
+            "texts": texts,
+            "pending": pending,
+            "running": running,
+        }

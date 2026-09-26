@@ -6,6 +6,7 @@ from app.jobs.runtime import runtime
 from app.models import (
     Account,
     BanContact,
+    Campaign,
     CollectRun,
     Contact,
     ContactBase,
@@ -25,6 +26,20 @@ def on_off(ok: bool) -> str:
 def _step(ok: bool, title: str, detail: str) -> str:
     mark = pe("check") if ok else pe("pin")
     return f"{mark} <b>{title}</b> — {detail}"
+
+
+def _join_html(lines: list[str], limit: int = 3800) -> str:
+    """Сборка HTML без обрезки посередине тега (Telegram иначе молча отклоняет)."""
+    out: list[str] = []
+    size = 0
+    for line in lines:
+        extra = len(line) + (1 if out else 0)
+        if size + extra > limit and out:
+            out.append("…")
+            break
+        out.append(line)
+        size += extra
+    return "\n".join(out)
 
 
 async def home_html(store) -> str:
@@ -50,12 +65,14 @@ async def home_html(store) -> str:
 
 def info_html() -> str:
     return (
-        f"{pe('info')} <b>Outreach</b> 2.0\n"
-        f"{pe('folder')} <b>Update:</b> 14.09.2026\n"
+        f"{pe('info')} <b>Outreach</b> 2.2\n"
+        f"{pe('folder')} <b>Update:</b> 26.09.2026\n"
         f"{pe('at')} <b>Поддержка:</b> @arxixx\n\n"
         f"{pe('users')} Несколько баз: вкл/выкл, импорт txt/csv/xlsx/md/sql, экспорт.\n"
         f"{pe('search')} Сбор из чата: все / писавшие → база для рассылки.\n"
+        f"{pe('folder')} <b>Отдельно</b> — сбор вне основной очереди + назначение в кампанию.\n"
         f"{pe('mega')} ЛС: кому писали и кто отвечал — отдельные базы.\n"
+        f"{pe('folder')} <b>Кампании</b> — свои базы, аккаунты и офферы, параллельно основной.\n"
         f"{pe('warn')} Банворды — в настройках модуля сбора.\n"
         f"{pe('user')} Аккаунты: session, рабочие часы, интервал, blocklist.\n"
         f"{pe('mega')} Офферы: random-ротация, premium emoji, фото.\n"
@@ -64,14 +81,19 @@ def info_html() -> str:
     )
 
 
-def accounts_html(accounts: list[Account]) -> str:
+def accounts_html(accounts: list[Account], page: int = 0, per: int = 8) -> str:
     if not accounts:
         return (
             f"{pe('user')} <b>Аккаунты</b>\n\n"
             f"<i>Пока пусто. Нажмите «Добавить session» — загрузите .session.</i>"
         )
-    lines = [f"{pe('user')} <b>Аккаунты</b> ({len(accounts)})\n"]
-    for acc in accounts:
+    total_pages = max(1, (len(accounts) + per - 1) // per)
+    page = max(0, min(page, total_pages - 1))
+    chunk = accounts[page * per : page * per + per]
+    lines = [
+        f"{pe('user')} <b>Аккаунты</b> ({len(accounts)}) · стр. {page + 1}/{total_pages}\n"
+    ]
+    for acc in chunk:
         live = pe("check") if acc.has_telethon else pe("block")
         asg = pe("check") if acc.assigned else pe("block")
         uname = f"@{acc.username}" if acc.username else escape(acc.label)
@@ -79,7 +101,7 @@ def accounts_html(accounts: list[Account]) -> str:
             f"{live} <b>{escape(uname)}</b> <code>#{acc.id}</code> {asg} назначен\n"
             f"   статус: <code>{escape(acc.status)}</code> · sent {acc.sent_count}"
         )
-    return "\n".join(lines)
+    return _join_html(lines)
 
 
 def account_html(acc: Account, proxies: list[Proxy] | None = None) -> str:
@@ -135,7 +157,7 @@ def proxies_html(proxies: list[Proxy]) -> str:
         lines.append(f"{mark} <code>#{p.id}</code> {escape(p.label)}")
     if len(proxies) > 12:
         lines.append(f"… ещё {len(proxies) - 12}")
-    return "\n".join(lines)
+    return _join_html(lines)
 
 
 def proxy_html(proxy: Proxy, accounts: list[Account]) -> str:
@@ -179,21 +201,26 @@ def contacts_html(counts: Counts, kinds: dict[str, int], preview: list[Contact])
         lines.append(
             f"{mark} {escape(c.pretty)} <code>{escape(c.kind)}</code>{extra}"
         )
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
-def texts_html(items: list[TextVariant]) -> str:
+def texts_html(items: list[TextVariant], page: int = 0, per: int = 8) -> str:
     if not items:
         return (
             f"{pe('mega')} <b>Тексты</b>\n\n"
             f"<i>Пришлите сообщение — текст, premium emoji, оформление и фото сохранятся. "
             f"Можно несколько вариантов, пойдут по очереди.</i>"
         )
-    lines = [f"{pe('mega')} <b>Тексты</b> ({len(items)})\n"]
-    for item in items:
+    total_pages = max(1, (len(items) + per - 1) // per)
+    page = max(0, min(page, total_pages - 1))
+    chunk = items[page * per : page * per + per]
+    lines = [
+        f"{pe('mega')} <b>Тексты</b> ({len(items)}) · стр. {page + 1}/{total_pages}\n"
+    ]
+    for item in chunk:
         ents = entities_loads(item.entities_json)
         emoji_n = sum(1 for e in ents if "emoji" in str(e.get("type")))
-        preview = escape((item.text or "").replace("\n", " ")[:120] or "—")
+        preview = escape((item.text or "").replace("\n", " ")[:80] or "—")
         en = on_off(bool(item.enabled))
         title = escape(item.title or f"вариант #{item.id}")
         lines.append(
@@ -202,7 +229,7 @@ def texts_html(items: list[TextVariant]) -> str:
             f"фото: {on_off(bool(item.photo_path))}\n"
             f"   <i>{preview}</i>"
         )
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
 def text_html(item: TextVariant) -> str:
@@ -241,19 +268,21 @@ def run_html(counts: Counts, accounts: list[Account], settings) -> str:
         "",
         f"{pe('user')} Аккаунты (по умолчанию все назначены):",
     ]
-    for acc in accounts:
+    for acc in accounts[:12]:
         mark = pe("check") if acc.assigned else pe("block")
         live = pe("lock") if acc.has_telethon else pe("warn")
         lines.append(
             f"{mark} {live} {escape(acc.label)} · {escape(acc.status)} · sent {acc.sent_count}"
         )
+    if len(accounts) > 12:
+        lines.append(f"… ещё {len(accounts) - 12}")
     if not accounts:
         lines.append("<i>Нет аккаунтов</i>")
     if not ready and not running:
         lines.append(
             f"\n{pe('info')} Чтобы стартовать: session + база + хотя бы один текст."
         )
-    return "\n".join(lines)
+    return _join_html(lines)
 
 
 def settings_html(settings) -> str:
@@ -272,27 +301,41 @@ def settings_html(settings) -> str:
     )
 
 
-def bases_html(bases: list[ContactBase], stats: dict[int, dict[str, int]]) -> str:
+def bases_html(bases: list[ContactBase], stats: dict[int, dict[str, int]], page: int = 0, per: int = 8) -> str:
     if not bases:
         return (
             f"{pe('users')} <b>Базы контактов</b>\n\n"
             f"<i>Нет баз. Создайте первую — txt/csv/xlsx/md/sql.</i>"
         )
-    lines = [f"{pe('users')} <b>Базы</b> ({len(bases)})\n"]
-    for base in bases:
+    total_pages = max(1, (len(bases) + per - 1) // per)
+    page = max(0, min(page, total_pages - 1))
+    chunk = bases[page * per : page * per + per]
+    lines = [f"{pe('users')} <b>Базы</b> ({len(bases)}) · стр. {page + 1}/{total_pages}\n"]
+    for base in chunk:
         st = stats.get(base.id, {})
-        mark = pe("check") if base.enabled else pe("block")
+        if base.isolated:
+            mark = pe("folder")
+            tag = " <i>отдельно</i>"
+        else:
+            mark = pe("check") if base.enabled else pe("block")
+            tag = ""
         lines.append(
-            f"{mark} <b>{escape(base.name)}</b> <code>#{base.id}</code>\n"
+            f"{mark} <b>{escape(base.name)}</b>{tag} <code>#{base.id}</code>\n"
             f"   pending {st.get('pending', 0)} / {st.get('total', 0)} · sent {st.get('sent', 0)}"
         )
-    return "\n".join(lines)
+    return _join_html(lines)
 
 
 def base_html(base: ContactBase, stats: dict[str, int], preview: list[Contact]) -> str:
-    mark = pe("check") if base.enabled else pe("block")
+    if base.isolated:
+        mark = pe("folder")
+        status = "отдельная (не в основной рассылке)"
+    else:
+        mark = pe("check") if base.enabled else pe("block")
+        status = "вкл" if base.enabled else "выкл"
     lines = [
         f"{pe('users')} <b>{escape(base.name)}</b> {mark}\n",
+        f"статус: <b>{status}</b>\n"
         f"pending <b>{stats.get('pending', 0)}</b> / {stats.get('total', 0)} · "
         f"sent {stats.get('sent', 0)}\n",
     ]
@@ -300,7 +343,7 @@ def base_html(base: ContactBase, stats: dict[str, int], preview: list[Contact]) 
         lines.append(f"{pe('pin')} {escape(c.pretty)} <code>{escape(c.status)}</code>")
     if not preview:
         lines.append("<i>Контактов пока нет — загрузите файл.</i>")
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
 def collect_html(accounts: list[Account] | None = None, running: bool = False) -> str:
@@ -311,12 +354,101 @@ def collect_html(accounts: list[Account] | None = None, running: bool = False) -
         f"{pe('users')} <b>Все участники</b> — все из чата.\n"
         f"{pe('term')} <b>Писавшие</b> — только кто писал.\n"
         f"{pe('mega')} <b>Кому писали / Кто отвечал</b> — отдельные базы из ЛС.\n"
+        f"{pe('folder')} <b>Отдельно</b> — тот же сбор, но база не идёт в основную "
+        f"очередь; после сбора — экспорт и «Назначить» в кампанию.\n"
         f"{pe('check')} <b>Итоговая база</b> — без банвордов, «не пишем», "
         f"«кому писали», sent и дублей.\n"
         f"{pe('chart')} <b>История сбора</b> — бот и API, скачать txt/csv/xlsx.\n\n"
         f"{pe('robot')} Аккаунтов: <b>{len(live)}</b>\n"
         f"{pe('pin')} Приватный чат: id <code>-100…</code> работает, "
         f"если аккаунт уже состоит в чате (диалоги подгружаются)."
+    )
+
+
+def collect_separate_html() -> str:
+    return (
+        f"{pe('folder')} <b>Отдельный сбор</b>\n\n"
+        f"Собирает так же, как обычный, но база помечается как "
+        f"<b>отдельная</b> и <b>не попадает</b> в основную очередь «Старт».\n\n"
+        f"После сбора: экспорт и кнопка <b>Назначить</b> — "
+        f"в «Основной» или в любую кампанию."
+    )
+
+
+def campaigns_html(campaigns: list[Campaign], running_ids: set[int] | None = None) -> str:
+    lines = [
+        f"{pe('folder')} <b>Кампании</b>\n",
+        f"Основной — глобальная рассылка (Старт в меню).\n"
+        f"Остальные — свои базы, аккаунты и офферы, крутятся отдельно.\n",
+    ]
+    if not campaigns:
+        lines.append("<i>Пусто — создайте кампанию.</i>")
+        return "\n".join(lines)
+    from app.jobs.runtime import runtime
+
+    for c in campaigns:
+        if c.is_main:
+            live = runtime.is_running("outreach", 0)
+            mark = pe("up") if live else pe("crown")
+            tag = "основная"
+        else:
+            live = runtime.is_running("campaign", c.id)
+            mark = pe("up") if live else pe("folder")
+            tag = "кампания"
+        state = "идёт" if live else "стоп"
+        lines.append(
+            f"{mark} <b>{escape(c.name)}</b> <code>#{c.id}</code> · {tag} · {state}"
+        )
+    return _join_html(lines)
+
+
+def campaign_html(
+    camp: Campaign,
+    *,
+    running: bool,
+    bases_n: int = 0,
+    accounts_n: int = 0,
+    texts_n: int = 0,
+    pending: int = 0,
+    base_names: list[str] | None = None,
+    account_names: list[str] | None = None,
+    text_names: list[str] | None = None,
+) -> str:
+    state = "идёт" if running else "остановлена"
+    if camp.is_main:
+        return (
+            f"{pe('crown')} <b>{escape(camp.name)}</b>\n\n"
+            f"Это основная рассылка. Запуск — кнопка <b>Старт</b> в меню "
+            f"или ниже. Берёт включённые (не отдельные) базы, назначенные "
+            f"аккаунты и все включённые офферы.\n\n"
+            f"Статус: <b>{state}</b> · pending в основной очереди: <b>{pending}</b>"
+        )
+
+    def _names(items: list[str] | None, empty: str) -> str:
+        if not items:
+            return f"<i>{empty}</i>"
+        shown = items[:6]
+        extra = f" +{len(items) - 6}" if len(items) > 6 else ""
+        return ", ".join(f"<code>{escape(x)}</code>" for x in shown) + extra
+
+    ready_bits = []
+    ready_bits.append(("базы", bases_n > 0))
+    ready_bits.append(("аккаунты", accounts_n > 0))
+    ready_bits.append(("офферы", texts_n > 0))
+    ready_bits.append(("pending / 24/7", pending > 0))
+    checklist = " · ".join(
+        f"{pe('check') if ok else pe('block')} {name}" for name, ok in ready_bits
+    )
+    return _join_html(
+        [
+            f"{pe('folder')} <b>{escape(camp.name)}</b> <code>#{camp.id}</code>\n",
+            f"Статус: <b>{state}</b> · pending: <b>{pending}</b>\n",
+            f"{pe('users')} базы ({bases_n}): {_names(base_names, 'не выбраны')}",
+            f"{pe('user')} аккаунты ({accounts_n}): {_names(account_names, 'не выбраны')}",
+            f"{pe('mega')} офферы ({texts_n}): {_names(text_names, 'не выбраны')}\n",
+            f"Готовность: {checklist}",
+            f"\n{pe('pin')} Выберите ресурсы кнопками ниже, затем Запустить.",
+        ]
     )
 
 
@@ -340,7 +472,7 @@ def banwords_html(words: list[str], banned_total: int = 0, page: int = 0) -> str
         f"\n\n{pe('block')} <b>Банбаза</b>: {banned_total} контактов — "
         f"откройте кнопку ниже (пагинация, удаление, очистка)."
     )
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
 def banbase_html(items: list[BanContact], total: int, page: int = 0, per: int = 10) -> str:
@@ -357,7 +489,7 @@ def banbase_html(items: list[BanContact], total: int, page: int = 0, per: int = 
             f"{pe('pin')} <code>#{item.id}</code> {escape(item.pretty)} — "
             f"<i>{escape((item.reason or '')[:50])}</i>"
         )
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
 def collect_history_html(runs: list[CollectRun], page: int = 0) -> str:
@@ -378,7 +510,7 @@ def collect_history_html(runs: list[CollectRun], page: int = 0) -> str:
             f"   {escape(run.kind)}/{escape(run.mode or '—')} · "
             f"+{run.added} · бан {run.banned} · {when}"
         )
-    return "\n".join(lines)[:3900]
+    return _join_html(lines)
 
 
 def collect_run_html(run: CollectRun) -> str:
@@ -412,15 +544,17 @@ def history_html(jobs, sends: list[SendRow]) -> str:
                 if job.status == "error"
                 else pe("clock")
             )
+            camp = escape(job.campaign_name or "")
+            camp_bit = f" · {camp}" if camp else ""
             snippet = escape((job.report or "").replace("\n", " ")[:80])
             lines.append(
-                f"{mark} #{job.id} <b>{escape(job.kind)}</b> "
+                f"{mark} #{job.id} <b>{escape(job.kind)}</b>{camp_bit} "
                 f"<code>{escape(job.status)}</code> {snippet}"
             )
         lines.append("")
     if not sends:
         lines.append("<i>Отправок пока нет.</i>")
-        return "\n".join(lines)[:3900]
+        return _join_html(lines)
     lines.append(f"{pe('inbox')} <b>Последние отправки</b>")
     for row in sends:
         mark = {
@@ -431,9 +565,14 @@ def history_html(jobs, sends: list[SendRow]) -> str:
         }.get(row.status, pe("cube"))
         who = escape(row.contact_pretty or "—")
         acc = escape(row.account_label or "—")
+        camp = escape(row.campaign_name or "")
+        camp_bit = f" [{camp}]" if camp else ""
         detail = escape((row.detail or "").replace("\n", " ")[:70])
-        lines.append(f"{mark} {who} ← {acc}\n   <code>{escape(row.status)}</code> {detail}")
-    return "\n".join(lines)[:3900]
+        lines.append(
+            f"{mark} {who} ← {acc}{camp_bit}\n"
+            f"   <code>{escape(row.status)}</code> {detail}"
+        )
+    return _join_html(lines)
 
 
 def prompt_html(title: str, body: str, icon: str = "inbox") -> str:

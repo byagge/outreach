@@ -8,14 +8,17 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.keyboards import (
     MenuCB,
+    assign_campaign_kb,
     bases_kb,
     banbase_kb,
     banwords_kb,
     cancel_kb,
     collect_accounts_kb,
     collect_chat_accounts_kb,
+    collect_done_kb,
     collect_kb,
     collect_running_kb,
+    collect_separate_kb,
     confirm_kb,
 )
 from app.bot.render import ask_input, finish_input, safe_edit
@@ -25,7 +28,14 @@ from app.context import ctx
 from app.jobs.runtime import runtime
 from app.tg.client import telethon_client
 from app.tg.collect import CollectResult, collect_dm_history, collect_from_chat
-from app.ui.screens import banbase_html, banwords_html, bases_html, collect_html, prompt_html
+from app.ui.screens import (
+    banbase_html,
+    banwords_html,
+    bases_html,
+    collect_html,
+    collect_separate_html,
+    prompt_html,
+)
 
 router = Router()
 
@@ -80,9 +90,15 @@ async def _save_result(
     target: str = "",
     account_id: int | None = None,
     source: str = "bot",
+    separate: bool = False,
 ) -> tuple[int, int, int]:
     suffix = " (стоп)" if result.stopped else ""
-    base = await ctx.store.add_base((base_name + suffix)[:60])
+    prefix = "⊕ " if separate else ""
+    base = await ctx.store.add_base(
+        (prefix + base_name + suffix)[:60],
+        isolated=1 if separate else 0,
+        enabled=0 if separate else 1,
+    )
     added = 0
     banned_n = 0
     for item in result.contacts:
@@ -102,7 +118,7 @@ async def _save_result(
     await ctx.store.add_collect_run(
         source=source,
         kind=kind,
-        mode=mode,
+        mode=("separate:" + mode) if separate and mode else ("separate" if separate else mode),
         target=target,
         title=result.chat_title or base.name,
         account_id=account_id,
@@ -115,11 +131,33 @@ async def _save_result(
     return base.id, added, banned_n
 
 
+async def _done_message(
+    message: Message,
+    *,
+    body: str,
+    base_id: int,
+    separate: bool,
+) -> None:
+    markup = collect_done_kb(base_id, separate=separate)
+    await message.answer(
+        prompt_html("Сбор готов", body, "check"),
+        reply_markup=markup,
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(MenuCB.filter(F.a == "collect"))
 async def cb_collect(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     text, markup = await _collect_screen()
     await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "col_sep"))
+async def cb_col_sep(query: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(collect_separate=True)
+    await safe_edit(query, collect_separate_html(), collect_separate_kb())
 
 
 @router.callback_query(MenuCB.filter(F.a == "col_set"))
@@ -252,20 +290,22 @@ async def cb_col_mode(query: CallbackQuery, callback_data: MenuCB, state: FSMCon
         await query.answer("Сбор уже идёт — нажмите Стоп", show_alert=True)
         return
     mode = MODE_CHAT.get(callback_data.i, "all")
+    data = await state.get_data()
+    separate = bool(data.get("collect_separate"))
     accounts = await ctx.store.list_accounts()
     live = [a for a in accounts if a.has_telethon]
     if not live:
         await query.answer("Нет аккаунтов с session", show_alert=True)
         return
-    await state.clear()
-    await state.update_data(collect_mode=mode)
+    await state.update_data(collect_mode=mode, collect_separate=separate)
+    sep_note = "\nРежим: <b>отдельная база</b> (не в основной очереди)." if separate else ""
     text = prompt_html(
         "Чат для сбора",
-        f"Режим: <b>{MODE_CHAT_LABEL[mode]}</b>\n\n"
+        f"Режим: <b>{MODE_CHAT_LABEL[mode]}</b>{sep_note}\n\n"
         "Выберите аккаунт, который <b>уже состоит</b> в приватном чате "
         "(для id <code>-100…</code> это обязательно).\n"
         "Или «Все по очереди».",
-        "users",
+        "folder" if separate else "users",
     )
     await safe_edit(query, text, collect_chat_accounts_kb(accounts, callback_data.i))
 
@@ -278,6 +318,7 @@ async def cb_col_chat_acc(query: CallbackQuery, callback_data: MenuCB, state: FS
     mode = MODE_CHAT.get(callback_data.p, "all")
     data = await state.get_data()
     mode = data.get("collect_mode", mode)
+    separate = bool(data.get("collect_separate"))
     account_id = callback_data.i
     if account_id:
         acc = await _pick_account(account_id)
@@ -288,16 +329,19 @@ async def cb_col_chat_acc(query: CallbackQuery, callback_data: MenuCB, state: FS
     else:
         acc_note = "Аккаунты: <b>все по очереди</b>"
     await state.set_state(CollectChat.chat)
-    await state.update_data(collect_mode=mode, account_id=account_id)
+    await state.update_data(
+        collect_mode=mode, account_id=account_id, collect_separate=separate
+    )
+    sep_note = "\nБаза: <b>отдельная</b>." if separate else ""
     text = prompt_html(
         "Чат для сбора",
         f"Режим: <b>{MODE_CHAT_LABEL.get(mode, mode)}</b>\n"
-        f"{acc_note}\n\n"
+        f"{acc_note}{sep_note}\n\n"
         "Пришлите:\n"
         "• ссылку / @username / invite\n"
         "• или id (<code>-100…</code>)\n\n"
         "Стоп во время сбора сохранит уже найденное.",
-        "users",
+        "folder" if separate else "users",
     )
     await safe_edit(query, text, cancel_kb())
     await ask_input(query, text)
@@ -309,6 +353,7 @@ async def on_col_chat(message: Message, state: FSMContext) -> None:
     await state.clear()
     mode = data.get("collect_mode", "all")
     account_id = int(data.get("account_id") or 0)
+    separate = bool(data.get("collect_separate"))
     chat_ref = (message.text or "").strip()
     if not chat_ref:
         await message.answer("Пустая ссылка")
@@ -325,7 +370,8 @@ async def on_col_chat(message: Message, state: FSMContext) -> None:
         return
 
     status_msg = await message.answer(
-        f"Собираю ({MODE_CHAT_LABEL.get(mode, mode)})…\n"
+        f"Собираю ({MODE_CHAT_LABEL.get(mode, mode)})"
+        f"{' · отдельно' if separate else ''}…\n"
         "Можно нажать Стоп — сохраню прогресс.",
         reply_markup=collect_running_kb(),
         parse_mode="HTML",
@@ -394,24 +440,20 @@ async def on_col_chat(message: Message, state: FSMContext) -> None:
             mode=mode,
             target=chat_ref,
             account_id=used.id,
+            separate=separate,
         )
         base = await ctx.store.get_base(base_id)
         stop_note = " (остановка — сохранено частичное)" if result.stopped else ""
+        sep_note = "\nТип: <b>отдельная</b> — не в основной очереди." if separate else ""
         body = (
             f"Чат: <code>{escape(chat_ref)}</code>{stop_note}\n"
             f"Режим: <b>{escape(label)}</b>\n"
             f"Аккаунт: <b>{escape(used.label)}</b>\n"
             f"В базу: <b>{added}</b> · банбаза: <b>{len(result.banned)}</b>\n"
-            f"База: <b>{escape(base.name if base else '')}</b> <code>#{base_id}</code>\n\n"
-            f"«Итоговая база» уберёт банворды / не пишем / кому писали."
+            f"База: <b>{escape(base.name if base else '')}</b> <code>#{base_id}</code>"
+            f"{sep_note}"
         )
-        bases = await ctx.store.list_bases()
-        stats = {b.id: await ctx.store.base_stats(b.id) for b in bases}
-        await message.answer(
-            prompt_html("Сбор готов", body, "check") + "\n\n" + bases_html(bases, stats),
-            reply_markup=bases_kb(bases),
-            parse_mode="HTML",
-        )
+        await _done_message(message, body=body, base_id=base_id, separate=separate)
 
     try:
         runtime.spawn("collect", 0, job())
@@ -429,20 +471,22 @@ async def cb_col_dm(query: CallbackQuery, callback_data: MenuCB, state: FSMConte
     if runtime.is_running("collect", 0):
         await query.answer("Сбор уже идёт", show_alert=True)
         return
-    await state.clear()
+    data = await state.get_data()
+    separate = bool(data.get("collect_separate"))
     mode = MODE_DM.get(callback_data.i, "messaged")
     accounts = await ctx.store.list_accounts()
     live = [a for a in accounts if a.has_telethon]
     if not live:
         await query.answer("Нет аккаунтов с session", show_alert=True)
         return
-    await state.update_data(dm_mode=mode)
+    await state.update_data(dm_mode=mode, collect_separate=separate)
+    sep_note = "\nБаза будет <b>отдельной</b>." if separate else ""
     text = prompt_html(
         "ЛС-история",
-        f"Режим: <b>{MODE_DM_LABEL[mode]}</b>\n\n"
+        f"Режим: <b>{MODE_DM_LABEL[mode]}</b>{sep_note}\n\n"
         "Выберите аккаунт. Результат — отдельная база.\n"
         "Во время сбора доступен Стоп.",
-        "mega" if mode == "messaged" else "term",
+        "folder" if separate else ("mega" if mode == "messaged" else "term"),
     )
     await safe_edit(query, text, collect_accounts_kb(accounts, callback_data.i))
 
@@ -455,6 +499,7 @@ async def cb_col_acc(query: CallbackQuery, callback_data: MenuCB, state: FSMCont
     mode = MODE_DM.get(callback_data.p, "messaged")
     data = await state.get_data()
     mode = data.get("dm_mode", mode)
+    separate = bool(data.get("collect_separate"))
     await state.clear()
     acc = await _pick_account(callback_data.i)
     if not acc:
@@ -467,6 +512,7 @@ async def cb_col_acc(query: CallbackQuery, callback_data: MenuCB, state: FSMCont
             "Сбор ЛС",
             f"Аккаунт <b>{escape(acc.label)}</b>\n"
             f"Режим: <b>{MODE_DM_LABEL.get(mode, mode)}</b>\n"
+            f"{'Отдельная база.\n' if separate else ''}"
             "Стоп сохранит уже найденное.",
             "robot",
         ),
@@ -498,22 +544,19 @@ async def cb_col_acc(query: CallbackQuery, callback_data: MenuCB, state: FSMCont
             mode=mode,
             target=acc.label,
             account_id=acc.id,
+            separate=separate,
         )
         base = await ctx.store.get_base(base_id)
         stop_note = " (стоп)" if result.stopped else ""
+        sep_note = "\nТип: <b>отдельная</b>." if separate else ""
         body = (
             f"Режим: <b>{escape(label)}</b>{stop_note}\n"
             f"Аккаунт: <b>{escape(acc.label)}</b>\n"
             f"В базу: <b>{added}</b> · банбаза: <b>{len(result.banned)}</b>\n"
             f"База: <b>{escape(base.name if base else '')}</b> <code>#{base_id}</code>"
+            f"{sep_note}"
         )
-        bases = await ctx.store.list_bases()
-        stats = {b.id: await ctx.store.base_stats(b.id) for b in bases}
-        await query.message.answer(
-            prompt_html("Сбор готов", body, "check") + "\n\n" + bases_html(bases, stats),
-            reply_markup=bases_kb(bases),
-            parse_mode="HTML",
-        )
+        await _done_message(query.message, body=body, base_id=base_id, separate=separate)
 
     try:
         runtime.spawn("collect", 0, job())
@@ -571,6 +614,78 @@ async def cb_col_dl(query: CallbackQuery, callback_data: MenuCB) -> None:
             BufferedInputFile(data, filename=f"{safe}.{ext}"),
         )
     await query.answer(f"Скачано {len(contacts)} контактов")
+
+
+@router.callback_query(MenuCB.filter(F.a == "col_exp"))
+async def cb_col_exp(query: CallbackQuery, callback_data: MenuCB) -> None:
+    base_id = callback_data.i
+    base = await ctx.store.get_base(base_id)
+    if not base:
+        await query.answer("Нет базы", show_alert=True)
+        return
+    contacts = await ctx.store.export_contacts(base_id)
+    if not contacts:
+        await query.answer("База пустая", show_alert=True)
+        return
+    from aiogram.types import BufferedInputFile
+
+    from app.utils.export import contacts_to_csv, contacts_to_txt, contacts_to_xlsx
+
+    safe = (base.name or f"base_{base_id}").replace(" ", "_")[:30]
+    for ext, data in (
+        ("txt", contacts_to_txt(contacts)),
+        ("csv", contacts_to_csv(contacts)),
+        ("xlsx", contacts_to_xlsx(contacts)),
+    ):
+        await query.message.answer_document(
+            BufferedInputFile(data, filename=f"{safe}.{ext}"),
+        )
+    await query.answer(f"Скачано {len(contacts)}")
+    await safe_edit(
+        query,
+        prompt_html(
+            "Экспорт",
+            f"База <b>{escape(base.name)}</b> · {len(contacts)} контактов.\n"
+            f"{'Отдельная — можно назначить в кампанию.' if base.isolated else ''}",
+            "up",
+        ),
+        collect_done_kb(base_id, separate=bool(base.isolated)),
+    )
+
+
+@router.callback_query(MenuCB.filter(F.a == "asg_camp"))
+async def cb_asg_camp(query: CallbackQuery, callback_data: MenuCB) -> None:
+    base = await ctx.store.get_base(callback_data.i)
+    if not base:
+        await query.answer("Нет базы", show_alert=True)
+        return
+    camps = await ctx.store.list_campaigns()
+    await safe_edit(
+        query,
+        prompt_html(
+            "Назначить базу",
+            f"База <b>{escape(base.name)}</b> <code>#{base.id}</code>\n\n"
+            f"Выберите кампанию:\n"
+            f"• <b>Основной</b> — включит базу в общую рассылку\n"
+            f"• другая — привяжет только к этой кампании",
+            "check",
+        ),
+        assign_campaign_kb(camps, base.id),
+    )
+
+
+@router.callback_query(MenuCB.filter(F.a == "asg_do"))
+async def cb_asg_do(query: CallbackQuery, callback_data: MenuCB) -> None:
+    base_id = callback_data.i
+    campaign_id = callback_data.p
+    msg = await ctx.store.assign_base_to_campaign(base_id, campaign_id)
+    await query.answer("Назначено")
+    base = await ctx.store.get_base(base_id)
+    await safe_edit(
+        query,
+        prompt_html("Назначено", escape(msg), "check"),
+        collect_done_kb(base_id, separate=bool(base and base.isolated)),
+    )
 
 
 @router.callback_query(MenuCB.filter(F.a == "bw_add"))

@@ -23,6 +23,11 @@ class AddText(StatesGroup):
     message = State()
 
 
+class EditText(StatesGroup):
+    message = State()
+    title = State()
+
+
 class EditSettings(StatesGroup):
     delay = State()
     between_delay = State()
@@ -46,3 +51,11 @@ class CollectChat(StatesGroup):
 
 class Banwords(StatesGroup):
     add = State()
+
+
+class AddCampaign(StatesGroup):
+    name = State()
+
+
+class RenameCampaign(StatesGroup):
+    name = State()

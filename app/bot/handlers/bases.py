@@ -23,7 +23,7 @@ async def _bases_screen(page: int = 0):
     stats = {}
     for b in bases:
         stats[b.id] = await ctx.store.base_stats(b.id)
-    return bases_html(bases, stats), bases_kb(bases, page)
+    return bases_html(bases, stats, page=page), bases_kb(bases, page)
 
 
 async def _base_screen(base_id: int, page: int = 0):

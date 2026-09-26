@@ -4,6 +4,7 @@ from app.bot.handlers import (
     accounts_router,
     banwords_router,
     bases_router,
+    campaigns_router,
     collect_router,
     contacts_router,
     history_router,
@@ -24,6 +25,7 @@ def setup_routers(dp: Dispatcher) -> None:
     dp.include_router(collect_router)
     dp.include_router(banwords_router)
     dp.include_router(texts_router)
+    dp.include_router(campaigns_router)
     dp.include_router(run_router)
     dp.include_router(settings_router)
     dp.include_router(history_router)

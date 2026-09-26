@@ -26,9 +26,24 @@ async def _pick_account(store: Store, account_id: int | None):
     return accounts[0]
 
 
-async def _save(store: Store, result, base_name: str, *, kind: str, mode: str, target: str, account_id: int | None):
+async def _save(
+    store: Store,
+    result,
+    base_name: str,
+    *,
+    kind: str,
+    mode: str,
+    target: str,
+    account_id: int | None,
+    isolated: bool = False,
+):
     suffix = " (стоп)" if getattr(result, "stopped", False) else ""
-    base = await store.add_base((base_name + suffix)[:60])
+    prefix = "⊕ " if isolated else ""
+    base = await store.add_base(
+        (prefix + base_name + suffix)[:60],
+        isolated=1 if isolated else 0,
+        enabled=0 if isolated else 1,
+    )
     added = 0
     for item in result.contacts:
         a, _ = await store.add_contacts([item], base.id)
@@ -44,10 +59,11 @@ async def _save(store: Store, result, base_name: str, *, kind: str, mode: str, t
             source_base_id=base.id,
         ):
             banned += 1
+    run_mode = f"separate:{mode}" if isolated and mode else ("separate" if isolated else mode)
     run = await store.add_collect_run(
         source="api",
         kind=kind,
-        mode=mode,
+        mode=run_mode,
         target=target,
         title=getattr(result, "chat_title", "") or base.name,
         account_id=account_id,
@@ -146,6 +162,7 @@ async def collect_chat(body: CollectChatBody, store: Store = Depends(get_store))
         mode=body.mode,
         target=body.chat,
         account_id=used.id,
+        isolated=bool(body.isolated),
     )
     return {
         "ok": True,
@@ -153,6 +170,7 @@ async def collect_chat(body: CollectChatBody, store: Store = Depends(get_store))
         "added": added,
         "banned": banned,
         "stopped": result.stopped,
+        "isolated": bool(body.isolated),
         "account_id": used.id,
         "run": to_dict(run),
         "notes": result.notes,
@@ -187,6 +205,7 @@ async def collect_dm(body: CollectDmBody, store: Store = Depends(get_store)):
         mode=body.mode,
         target=acc.label,
         account_id=acc.id,
+        isolated=bool(body.isolated),
     )
     return {
         "ok": True,
@@ -194,6 +213,7 @@ async def collect_dm(body: CollectDmBody, store: Store = Depends(get_store)):
         "added": added,
         "banned": banned,
         "stopped": result.stopped,
+        "isolated": bool(body.isolated),
         "account_id": acc.id,
         "run": to_dict(run),
         "notes": result.notes,

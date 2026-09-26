@@ -37,8 +37,23 @@ async def add_contacts(body: ContactsAdd, store: Store = Depends(get_store)):
 
 
 @router.post("/claim")
-async def claim_contact(store: Store = Depends(get_store)):
-    contact = await store.claim_contact()
+async def claim_contact(
+    base_ids: str | None = Query(
+        None, description="Через запятую id баз (кампания). Иначе — основная очередь."
+    ),
+    mailing_only: bool = Query(True, description="Только не-isolated enabled базы"),
+    store: Store = Depends(get_store),
+):
+    ids = None
+    if base_ids:
+        try:
+            ids = [int(x.strip()) for x in base_ids.split(",") if x.strip()]
+        except ValueError as e:
+            raise HTTPException(400, "base_ids: список целых через запятую") from e
+    contact = await store.claim_contact(
+        base_ids=ids,
+        mailing_only=mailing_only if ids is None else False,
+    )
     return {"ok": True, "contact": to_dict(contact)}
 
 

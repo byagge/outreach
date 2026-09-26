@@ -59,10 +59,21 @@ class ProxyBind(BaseModel):
 
 class BaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    isolated: int = 0
+    enabled: int = 1
 
 
 class BaseRename(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+
+class BaseAssign(BaseModel):
+    campaign_id: int
+
+
+class BaseFlags(BaseModel):
+    isolated: int | None = None
+    enabled: int | None = None
 
 
 class ContactsAdd(BaseModel):
@@ -88,6 +99,7 @@ class TextCreate(BaseModel):
 class TextUpdate(BaseModel):
     text: str | None = None
     title: str | None = None
+    entities: list[dict[str, Any]] | None = None
     entities_json: str | None = None
     photo_path: str | None = None
     enabled: int | None = None
@@ -115,6 +127,7 @@ class CollectChatBody(BaseModel):
     mode: str = Field(default="all", description="all | writers")
     account_id: int | None = None
     base_name: str | None = None
+    isolated: bool = False
 
 
 class CollectDmBody(BaseModel):
@@ -122,8 +135,21 @@ class CollectDmBody(BaseModel):
     account_id: int | None = None
     base_name: str | None = None
     dialog_limit: int = 500
+    isolated: bool = False
 
 
 class MailingBaseBody(BaseModel):
     name: str = "Итоговая рассылка"
     source_base_id: int | None = None
+
+
+class CampaignCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+class CampaignRename(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+class CampaignIdsBody(BaseModel):
+    ids: list[int] = Field(default_factory=list)

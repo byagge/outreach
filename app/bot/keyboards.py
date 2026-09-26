@@ -9,7 +9,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from app.models import Account, ContactBase, Proxy, TextVariant
+from app.models import Account, Campaign, ContactBase, Proxy, TextVariant
 from app.ui.emoji import icon_id
 
 BTN_PANEL = "Панель"
@@ -90,8 +90,8 @@ def main_menu(running: bool = False) -> InlineKeyboardMarkup:
             [start, ib("Базы", "bases", icon="users")],
             [ib("Офферы", "texts", icon="mega"), ib("Аккаунты", "accounts", icon="user")],
             [ib("Прокси", "proxies", icon="shield"), ib("Настройки", "settings", icon="hammer")],
-            [ib("Сбор базы", "collect", icon="search"), ib("История", "history", icon="chart")],
-            [ib("Инфо", "info", icon="info")],
+            [ib("Сбор базы", "collect", icon="search"), ib("Кампании", "camps", icon="folder")],
+            [ib("История", "history", icon="chart"), ib("Инфо", "info", icon="info")],
         ]
     )
 
@@ -229,14 +229,23 @@ def text_kb(item: TextVariant) -> InlineKeyboardMarkup:
         if item.enabled
         else ib("Включить", "tx_on", item.id, icon="check")
     )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [toggle],
+    rows: list[list[InlineKeyboardButton]] = [
+        [toggle],
+        [
+            ib("Изменить текст", "tx_edit", item.id, icon="hammer"),
+            ib("Название", "tx_ren", item.id, icon="bookmark"),
+        ],
+    ]
+    if item.photo_path:
+        rows.append([ib("Убрать фото", "tx_nophoto", item.id, icon="block")])
+    rows.extend(
+        [
             [ib("Удалить", "tx_del", item.id, icon="warn")],
             [ib("Тексты", "texts", icon="mega")],
             home_row(),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def run_kb(accounts: list[Account], running: bool) -> InlineKeyboardMarkup:
@@ -258,8 +267,13 @@ def bases_kb(bases: list[ContactBase], page: int = 0) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [[ib("Новая база", "base_add", icon="inbox")]]
     chunk = bases[page * 8 : page * 8 + 8]
     for base in chunk:
-        icon = "check" if base.enabled else "block"
-        rows.append([ib(base.name[:28], "base", base.id, icon=icon)])
+        if base.isolated:
+            icon = "folder"
+            prefix = "⊕ "
+        else:
+            icon = "check" if base.enabled else "block"
+            prefix = ""
+        rows.append([ib(f"{prefix}{base.name[:26]}", "base", base.id, icon=icon)])
     total_pages = max(1, (len(bases) + 7) // 8)
     if total_pages > 1:
         rows.append(nav_row("bases", page, total_pages))
@@ -274,9 +288,12 @@ def base_kb(base: ContactBase, total: int, page: int = 0) -> InlineKeyboardMarku
     rows = [
         [toggle],
         [ib("Загрузить", "base_imp", base.id, icon="inbox"), ib("Экспорт", "base_exp", base.id, icon="up")],
-        [ib("Итоговая из этой базы", "col_final", base.id, icon="check")],
-        [ib("Удалить базу", "base_del", base.id, icon="warn")],
     ]
+    if base.isolated:
+        rows.append([ib("Назначить в кампанию", "asg_camp", base.id, icon="check")])
+    else:
+        rows.append([ib("Итоговая из этой базы", "col_final", base.id, icon="check")])
+    rows.append([ib("Удалить базу", "base_del", base.id, icon="warn")])
     total_pages = max(1, (max(total, 1) + 7) // 8)
     if total_pages > 1:
         prev = (
@@ -305,12 +322,242 @@ def collect_kb(accounts: list[Account] | None = None, running: bool = False) -> 
             [ib("Только писавшие", "col_mode", 1, icon="search")],
             [ib("Кому писали (ЛС)", "col_dm", 0, icon="mega")],
             [ib("Кто отвечал (ЛС)", "col_dm", 1, icon="term")],
+            [ib("Отдельно", "col_sep", icon="folder")],
             [ib("Итоговая база для рассылки", "col_final", icon="check")],
             [ib("История сбора / скачать", "col_hist", icon="chart")],
             [ib(f"Настройки сбора · акк. {n}", "col_set", icon="hammer")],
             home_row(),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_separate_kb() -> InlineKeyboardMarkup:
+    """Тот же сбор, но база не попадает в основную очередь."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [ib("Все участники чата", "col_mode", 0, icon="users")],
+            [ib("Только писавшие", "col_mode", 1, icon="search")],
+            [ib("Кому писали (ЛС)", "col_dm", 0, icon="mega")],
+            [ib("Кто отвечал (ЛС)", "col_dm", 1, icon="term")],
+            [ib("Назад к сбору", "collect", icon="down")],
+            home_row(),
+        ]
+    )
+
+
+def collect_done_kb(base_id: int, *, separate: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [ib("Экспорт txt/csv/xlsx", "col_exp", base_id, icon="up")],
+    ]
+    if separate:
+        rows.append([ib("Назначить в кампанию", "asg_camp", base_id, icon="check")])
+    rows.append([ib("Открыть базу", "base", base_id, icon="users")])
+    rows.append([ib("К сбору", "collect", icon="search")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def assign_campaign_kb(campaigns: list[Campaign], base_id: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for c in campaigns:
+        icon = "crown" if c.is_main else "folder"
+        rows.append([ib(c.name[:28], "asg_do", base_id, p=c.id, icon=icon)])
+    rows.append([ib("Назад", "col_exp", base_id, icon="down")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def campaigns_kb(campaigns: list[Campaign], page: int = 0) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [[ib("Новая кампания", "camp_add", icon="inbox")]]
+    chunk = campaigns[page * 8 : page * 8 + 8]
+    for c in chunk:
+        from app.jobs.runtime import runtime
+
+        if c.is_main:
+            running = runtime.is_running("outreach", 0)
+            icon = "up" if running else "crown"
+        else:
+            running = runtime.is_running("campaign", c.id)
+            icon = "up" if running else "folder"
+        rows.append([ib(c.name[:28], "camp", c.id, icon=icon)])
+    total_pages = max(1, (len(campaigns) + 7) // 8)
+    if total_pages > 1:
+        rows.append(nav_row("camps", page, total_pages))
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def campaign_kb(camp: Campaign, running: bool) -> InlineKeyboardMarkup:
+    if camp.is_main:
+        start = (
+            ib("Стоп основной", "run_stop", icon="down")
+            if running
+            else ib("Старт основной", "run_go", icon="up")
+        )
+        rows: list[list[InlineKeyboardButton]] = [
+            [start],
+            [ib("К рассылке", "run", icon="robot")],
+            [ib("Все кампании", "camps", icon="folder")],
+            home_row(),
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    start = (
+        ib("Стоп", "camp_stop", camp.id, icon="down")
+        if running
+        else ib("Запустить", "camp_go", camp.id, icon="up")
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [start],
+            [
+                ib("Базы", "camp_bases", camp.id, icon="users"),
+                ib("Аккаунты", "camp_accs", camp.id, icon="user"),
+            ],
+            [ib("Офферы", "camp_txs", camp.id, icon="mega")],
+            [
+                ib("Переименовать", "camp_ren", camp.id, icon="hammer"),
+                ib("Удалить", "camp_del", camp.id, icon="warn"),
+            ],
+            [ib("Все кампании", "camps", icon="folder")],
+            home_row(),
+        ]
+    )
+
+
+def campaign_pick_bases_kb(
+    bases: list[ContactBase], selected: set[int], campaign_id: int, page: int = 0
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            ib("Все", "camp_ball", campaign_id, icon="check"),
+            ib("Снять", "camp_bclr", campaign_id, icon="block"),
+        ]
+    ]
+    chunk = bases[page * 8 : page * 8 + 8]
+    for base in chunk:
+        on = base.id in selected
+        mark = "✓ " if on else "· "
+        tag = "⊕ " if base.isolated else ""
+        rows.append(
+            [
+                ib(
+                    f"{mark}{tag}{base.name[:24]}",
+                    "camp_tb",
+                    campaign_id,
+                    p=base.id,
+                    icon="check" if on else "block",
+                )
+            ]
+        )
+    total_pages = max(1, (len(bases) + 7) // 8)
+    if total_pages > 1:
+        prev = (
+            ib("Назад", "camp_bases", campaign_id, p=page - 1, icon="down")
+            if page > 0
+            else _off("Назад", "block")
+        )
+        nxt = (
+            ib("Вперёд", "camp_bases", campaign_id, p=page + 1, icon="up")
+            if page + 1 < total_pages
+            else _off("Вперёд", "block")
+        )
+        rows.append(
+            [prev, ib(f"{page + 1}/{total_pages}", "camp_bases", campaign_id, p=page, icon="stack"), nxt]
+        )
+    rows.append([ib("К кампании", "camp", campaign_id, icon="folder")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def campaign_pick_accounts_kb(
+    accounts: list[Account], selected: set[int], campaign_id: int, page: int = 0
+) -> InlineKeyboardMarkup:
+    live = [a for a in accounts if a.has_telethon]
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            ib("Все", "camp_aall", campaign_id, icon="check"),
+            ib("Снять", "camp_aclr", campaign_id, icon="block"),
+        ]
+    ]
+    chunk = live[page * 8 : page * 8 + 8]
+    for acc in chunk:
+        on = acc.id in selected
+        mark = "✓ " if on else "· "
+        rows.append(
+            [
+                ib(
+                    f"{mark}{acc.label[:24]}",
+                    "camp_ta",
+                    campaign_id,
+                    p=acc.id,
+                    icon="check" if on else "block",
+                )
+            ]
+        )
+    total_pages = max(1, (len(live) + 7) // 8)
+    if total_pages > 1:
+        prev = (
+            ib("Назад", "camp_accs", campaign_id, p=page - 1, icon="down")
+            if page > 0
+            else _off("Назад", "block")
+        )
+        nxt = (
+            ib("Вперёд", "camp_accs", campaign_id, p=page + 1, icon="up")
+            if page + 1 < total_pages
+            else _off("Вперёд", "block")
+        )
+        rows.append(
+            [prev, ib(f"{page + 1}/{total_pages}", "camp_accs", campaign_id, p=page, icon="stack"), nxt]
+        )
+    rows.append([ib("К кампании", "camp", campaign_id, icon="folder")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def campaign_pick_texts_kb(
+    texts: list[TextVariant], selected: set[int], campaign_id: int, page: int = 0
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            ib("Все", "camp_tall", campaign_id, icon="check"),
+            ib("Снять", "camp_tclr", campaign_id, icon="block"),
+        ]
+    ]
+    chunk = texts[page * 8 : page * 8 + 8]
+    for item in chunk:
+        on = item.id in selected
+        mark = "✓ " if on else "· "
+        title = (item.title or f"#{item.id}")[:24]
+        rows.append(
+            [
+                ib(
+                    f"{mark}{title}",
+                    "camp_tt",
+                    campaign_id,
+                    p=item.id,
+                    icon="check" if on else "block",
+                )
+            ]
+        )
+    total_pages = max(1, (len(texts) + 7) // 8)
+    if total_pages > 1:
+        prev = (
+            ib("Назад", "camp_txs", campaign_id, p=page - 1, icon="down")
+            if page > 0
+            else _off("Назад", "block")
+        )
+        nxt = (
+            ib("Вперёд", "camp_txs", campaign_id, p=page + 1, icon="up")
+            if page + 1 < total_pages
+            else _off("Вперёд", "block")
+        )
+        rows.append(
+            [prev, ib(f"{page + 1}/{total_pages}", "camp_txs", campaign_id, p=page, icon="stack"), nxt]
+        )
+    rows.append([ib("К кампании", "camp", campaign_id, icon="folder")])
+    rows.append(home_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

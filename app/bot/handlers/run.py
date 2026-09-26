@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery
 from app.bot.keyboards import MenuCB, run_kb
 from app.bot.render import safe_edit
 from app.context import ctx
-from app.jobs.outreach import run_outreach
+from app.jobs.outreach import main_scope, run_outreach
 from app.jobs.runtime import runtime
 from app.ui.screens import run_html
 
@@ -57,8 +57,15 @@ async def cb_run_go(query: CallbackQuery) -> None:
         return
     await query.answer("Запускаю" if counts.pending > 0 else "24/7 — жду базу")
     chat_id = query.from_user.id if query.from_user else None
+    scope = main_scope()
     try:
-        runtime.spawn("outreach", 0, run_outreach(ctx.store, query.bot, chat_id))
+        main = await ctx.store.get_main_campaign()
+        scope.campaign_id = main.id
+        scope.campaign_name = main.name or "Основной"
+    except Exception:
+        pass
+    try:
+        runtime.spawn("outreach", 0, run_outreach(ctx.store, query.bot, chat_id, scope))
     except RuntimeError as e:
         await query.answer(str(e), show_alert=True)
         return

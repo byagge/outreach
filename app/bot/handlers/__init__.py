@@ -1,6 +1,7 @@
 from app.bot.handlers.accounts import router as accounts_router
 from app.bot.handlers.banwords import router as banwords_router
 from app.bot.handlers.bases import router as bases_router
+from app.bot.handlers.campaigns import router as campaigns_router
 from app.bot.handlers.collect import router as collect_router
 from app.bot.handlers.contacts import router as contacts_router
 from app.bot.handlers.history import router as history_router
@@ -14,6 +15,7 @@ __all__ = [
     "accounts_router",
     "banwords_router",
     "bases_router",
+    "campaigns_router",
     "collect_router",
     "contacts_router",
     "history_router",

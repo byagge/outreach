@@ -2,6 +2,7 @@
 
 **Base URL (prod):** `https://outreachapi.arix.vu`  
 **Prefix:** `/v1`  
+**Version:** `2.2.0`  
 **Auth:** заголовок `X-API-Key: <API_KEY из .env>`  
 **Интерактивно:** `/docs` (Swagger), `/redoc`  
 **OpenAPI JSON:** `/openapi.json`
@@ -36,11 +37,12 @@
 5. [Bases](#5-bases)
 6. [Contacts](#6-contacts)
 7. [Texts / Offers](#7-texts--offers)
-8. [Blocklist / Banwords / Ban-base](#8-blocklist--banwords--ban-base)
-9. [Collect](#9-collect)
-10. [Run (рассылка)](#10-run-рассылка)
-11. [History](#11-history)
-12. [Примеры curl](#12-примеры-curl)
+8. [Campaigns](#8-campaigns)
+9. [Blocklist / Banwords / Ban-base](#9-blocklist--banwords--ban-base)
+10. [Collect](#10-collect)
+11. [Run (основная рассылка)](#11-run-основная-рассылка)
+12. [History](#12-history)
+13. [Примеры curl](#13-примеры-curl)
 
 ---
 
@@ -306,19 +308,26 @@
 
 ## 5. Bases
 
-Базы контактов (листы). Выключенная база не участвует в рассылке.
+Базы контактов.  
+`enabled=1` + `isolated=0` — участвуют в **основной** рассылке.  
+`isolated=1` — отдельная база (сбор «Отдельно»): не в основной очереди, пока не назначена в «Основной» или кампанию.
 
 ### `GET /v1/bases`
 
-Список баз + `stats` (`total`, `pending`, `sent`) по каждой.
+Список баз + `stats` (`total`, `pending`, `sent`) + флаги `enabled`, `isolated`.
 
 ---
 
 ### `POST /v1/bases`
 
 ```json
-{ "name": "Лидген март" }
+{ "name": "Лидген март", "isolated": 0, "enabled": 1 }
 ```
+
+| Поле | По умолчанию | Смысл |
+|------|--------------|--------|
+| `isolated` | `0` | `1` = отдельная (не в основной очереди) |
+| `enabled` | `1` | для isolated по умолчанию создаётся `enabled=0` |
 
 ---
 
@@ -338,9 +347,34 @@
 
 ---
 
+### `PATCH /v1/bases/{base_id}/flags`
+
+```json
+{ "isolated": 0, "enabled": 1 }
+```
+
+Любое из полей опционально.
+
+---
+
+### `POST /v1/bases/{base_id}/assign`
+
+Назначить базу в кампанию (как кнопка «Назначить» в боте).
+
+```json
+{ "campaign_id": 1 }
+```
+
+- Если кампания **Основной** (`is_main=1`): `isolated→0`, `enabled→1` (попадает в основную очередь).
+- Иначе: база привязывается к кампании, остаётся `isolated=1`.
+
+**Ответ:** `detail` (строка), `base`.
+
+---
+
 ### `POST /v1/bases/{base_id}/toggle`
 
-Вкл/выкл базу.
+Вкл/выкл базу (`enabled`). Для isolated сама по себе не открывает основную очередь.
 
 ---
 
@@ -420,7 +454,14 @@
 
 ### `POST /v1/contacts/claim`
 
-Атомарно взять следующий `pending` контакт (как делает воркер). Статус → `sending`.
+Атомарно взять следующий `pending` контакт (как воркер). Статус → `sending`.
+
+**Query:**
+
+| Параметр | По умолчанию | Смысл |
+|----------|--------------|--------|
+| `mailing_only` | `true` | Только enabled + не-isolated базы (основная очередь) |
+| `base_ids` | — | `1,2,3` — claim только из этих баз (кампания) |
 
 ---
 
@@ -500,7 +541,25 @@ Multipart: `text`, `title`, опционально `file` (фото).
 
 ### `PATCH /v1/texts/{text_id}`
 
-Обновить: `text`, `title`, `entities_json`, `photo_path`, `enabled`.
+Обновить оффер (edit).
+
+```json
+{
+  "title": "оффер A v2",
+  "text": "Новый текст…",
+  "entities": [],
+  "photo_path": "",
+  "enabled": 1
+}
+```
+
+Поля опциональны. Можно передать `entities` (массив) **или** `entities_json` (строка).
+
+---
+
+### `POST /v1/texts/{text_id}/upload`
+
+Заменить фото оффера. Multipart `file`.
 
 ---
 
@@ -516,7 +575,105 @@ Multipart: `text`, `title`, опционально `file` (фото).
 
 ---
 
-## 8. Blocklist / Banwords / Ban-base
+## 8. Campaigns
+
+Отдельные рассылки со своими базами, аккаунтами и офферами.  
+**Основной** (`is_main=1`) — глобальная очередь; старт через `/v1/run/*`.  
+Остальные — через `/v1/campaigns/{id}/start|stop`.
+
+### `GET /v1/campaigns`
+
+Список. У каждой: `running`, `pending`; у не-main ещё `bases_n`, `accounts_n`, `texts_n`.
+
+---
+
+### `POST /v1/campaigns`
+
+```json
+{ "name": "Ретаргет апрель" }
+```
+
+---
+
+### `GET /v1/campaigns/{campaign_id}`
+
+Детали: кампания, `running`, `pending`, `base_ids`, `account_ids`, `text_ids`, объекты `bases` / `accounts` / `texts`.
+
+То же: `GET /v1/campaigns/{id}/status`.
+
+---
+
+### `PATCH /v1/campaigns/{campaign_id}`
+
+Переименовать (не для Основного).
+
+```json
+{ "name": "Новое имя" }
+```
+
+---
+
+### `DELETE /v1/campaigns/{campaign_id}`
+
+Удалить (не Основной; сначала stop). Базы/офферы не удаляются.
+
+---
+
+### `PUT /v1/campaigns/{id}/bases`
+
+Заменить набор баз целиком.
+
+```json
+{ "ids": [3, 5, 8] }
+```
+
+---
+
+### `PUT /v1/campaigns/{id}/accounts`
+
+```json
+{ "ids": [1, 2] }
+```
+
+---
+
+### `PUT /v1/campaigns/{id}/texts`
+
+```json
+{ "ids": [4, 7] }
+```
+
+---
+
+### `POST /v1/campaigns/{id}/bases/{base_id}/toggle`
+
+### `POST /v1/campaigns/{id}/accounts/{account_id}/toggle`
+
+### `POST /v1/campaigns/{id}/texts/{text_id}/toggle`
+
+Переключить один элемент. **Ответ:** `selected` (bool) + актуальный список id.
+
+---
+
+### `POST /v1/campaigns/{id}/start`
+
+Запуск отдельной кампании.
+
+Условия: ≥1 база, ≥1 аккаунт с session, ≥1 оффер; pending > 0 или `continuous=true`.
+
+**409** если уже запущена. Для Основного → используйте `/v1/run/start`.
+
+В логах/sends: `campaign_name`, префикс `[Имя]`.
+
+---
+
+### `POST /v1/campaigns/{id}/stop`
+
+Остановка кампании.
+
+---
+
+## 9. Blocklist / Banwords / Ban-base
 
 ### `GET /v1/blocklist`
 
@@ -582,59 +739,58 @@ Pending-контакты с совпадением помечаются `skip`.
 
 ---
 
-## 9. Collect
+## 10. Collect
 
-Сбор базы для рассылки. Результат → **новая база** в `/v1/bases` (можно сразу `run/start`).
+Сбор базы. Результат → новая запись в `/v1/bases`.
+
+Флаг **`isolated: true`** — как кнопка «Отдельно» в боте: база не в основной очереди; назначьте через `POST /v1/bases/{id}/assign`.
 
 ### `POST /v1/collect/chat`
-
-Сбор из чата/группы.
 
 ```json
 {
   "chat": "https://t.me/somechat",
   "mode": "all",
   "account_id": null,
-  "base_name": null
+  "base_name": null,
+  "isolated": false
 }
 ```
 
 | Поле | Описание |
 |------|----------|
-| `chat` | Ссылка, `@username`, invite или id `-100…` (аккаунт должен быть в чате) |
-| `mode` | `all` — все участники; `writers` — только писавшие |
-| `account_id` | `null` = перебор; для приватных укажите аккаунт-участник |
+| `chat` | Ссылка, `@username`, invite или id `-100…` |
+| `mode` | `all` / `writers` |
+| `account_id` | `null` = перебор; для приватных — участник |
 | `base_name` | Имя базы; иначе авто |
+| `isolated` | `true` = отдельная база |
 
-Банворды применяются автоматически. Совпадения → банбаза, не в рабочую.
-
-**Ответ:** `base`, `added`, `banned`, `stopped`, `account_id`, `notes`.
+**Ответ:** `base`, `added`, `banned`, `stopped`, `isolated`, `account_id`, `run`, `notes`.
 
 ---
 
 ### `POST /v1/collect/dm`
-
-Сбор из ЛС-истории аккаунта → **отдельная** база.
 
 ```json
 {
   "mode": "messaged",
   "account_id": 1,
   "dialog_limit": 500,
-  "base_name": null
+  "base_name": null,
+  "isolated": true
 }
 ```
 
 | `mode` | Смысл |
 |--------|--------|
-| `messaged` | Кому писали (есть исходящее) |
-| `replied` | Кто отвечал (есть входящее) |
+| `messaged` | Кому писали |
+| `replied` | Кто отвечал |
 
 ---
 
 ### `POST /v1/collect/mailing-base`
 
-Итоговая база для рассылки: pending из включённых баз (или одной `source_base_id`), без дублей, без банбазы / blocklist / «кому писали» / `sent`.
+Итоговая база: pending из включённых **не-isolated** баз (или одной `source_base_id`), без дублей / банбазы / blocklist / «кому писали» / `sent`.
 
 ```json
 {
@@ -643,43 +799,29 @@ Pending-контакты с совпадением помечаются `skip`.
 }
 ```
 
-**Ответ:** `base`, `stats` (`added`, `excluded_ban`, `excluded_block`, `excluded_messaged`, …), `run`.
-
 ---
 
 ### `GET /v1/collect/history`
 
-Журнал сборов (бот + API). Query: `limit`, `offset`.
-
-**Ответ:** `items[]` — `id`, `source` (`bot`|`api`), `kind`, `mode`, `target`, `title`, `base_id`, `added`, `banned`, `stopped`, `created_at`, …
+Журнал сборов. Query: `limit`, `offset`.
 
 ### `GET /v1/collect/history/{run_id}`
 
-Одна запись журнала.
-
 ### `GET /v1/collect/history/{run_id}/export?fmt=txt|csv|xlsx`
-
-Скачать контакты базы этого сбора.
 
 ---
 
-## 10. Run (рассылка)
+## 11. Run (основная рассылка)
 
 ### `GET /v1/run/status`
 
-`running`, `counts`, `continuous`, `running_keys`.
+`running`, `counts`, `continuous`, `running_keys` (включая `campaign:N`).
 
 ---
 
 ### `POST /v1/run/start`
 
-Запуск рассылки 24/7 (или до опустошения очереди, если `continuous=false`).
-
-Условия:
-
-- есть assigned аккаунты с session;
-- есть офферы;
-- есть pending **или** включён `continuous`.
+Основная рассылка (кампания «Основной»). Берёт enabled + не-isolated базы, assigned аккаунты, все enabled офферы.
 
 **409** если уже запущено.
 
@@ -687,31 +829,29 @@ Pending-контакты с совпадением помечаются `skip`.
 
 ### `POST /v1/run/stop`
 
-Запрос остановки. Воркеры завершаются gracefully.
+Остановка основной рассылки.
 
 ---
 
-## 11. History
+## 12. History
 
 ### `GET /v1/history/sends`
 
-Последние отправки.
+Последние отправки. Поля включают `campaign_id`, `campaign_name`.
 
 **Query:** `limit`, `offset`.
-
-Поля: `contact_pretty`, `account_label`, `status` (`sent`/`skip`/`error`/`wait`), `detail`, …
 
 ---
 
 ### `GET /v1/history/jobs`
 
-Последние jobs (`outreach`, …).
+Jobs (`outreach`, `campaign`, …) + `campaign_id` / `campaign_name`.
 
 ---
 
 ### `GET /v1/history/jobs/{job_id}`
 
-Job + логи (до 100).
+Job + логи (до 100). В сообщениях логов — префикс `[Имя кампании]`.
 
 ---
 
@@ -721,54 +861,37 @@ Job + логи (до 100).
 
 ---
 
-## 12. Примеры curl
+## 13. Примеры curl
 
 ```bash
 export BASE=https://outreachapi.arix.vu
 export KEY=your-api-key
 H=(-H "X-API-Key: $KEY" -H "Content-Type: application/json")
 
-# health
+# health / stats
 curl -s $BASE/v1/health
-
-# stats
 curl -s "${H[@]}" $BASE/v1/stats
 
-# настройки
-curl -s "${H[@]}" $BASE/v1/settings
-curl -s "${H[@]}" -X PATCH $BASE/v1/settings \
-  -d '{"delay_min":60,"delay_max":120,"between_delay_min":0,"continuous":true}'
-
-# аккаунт + session
-curl -s "${H[@]}" -X POST $BASE/v1/accounts -d '{"label":"work1"}'
-curl -s -H "X-API-Key: $KEY" -F "file=@./work1.session" \
-  $BASE/v1/accounts/1/session
-
-# прокси
-curl -s "${H[@]}" -X POST $BASE/v1/proxies \
-  -d '{"text":"1.2.3.4:1080\n5.6.7.8:1080:user:pass"}'
-curl -s "${H[@]}" -X POST $BASE/v1/proxies/1/check
-
-# база + импорт
-curl -s "${H[@]}" -X POST $BASE/v1/bases -d '{"name":"март"}'
-curl -s -H "X-API-Key: $KEY" -F "file=@./leads.txt" $BASE/v1/bases/1/import
-curl -s "${H[@]}" "$BASE/v1/bases/1/export?fmt=csv" -o leads.csv
-
-# оффер
-curl -s "${H[@]}" -X POST $BASE/v1/texts \
-  -d '{"title":"A","text":"Привет! Есть предложение…"}'
-
-# банворды
-curl -s "${H[@]}" -X POST $BASE/v1/banwords \
-  -d '{"words":["казино","ставки"]}'
-
-# сбор
+# отдельный сбор → назначить в кампанию
 curl -s "${H[@]}" -X POST $BASE/v1/collect/chat \
-  -d '{"chat":"@somechat","mode":"writers"}'
+  -d '{"chat":"@somechat","mode":"writers","isolated":true}'
+curl -s "${H[@]}" -X POST $BASE/v1/bases/3/assign -d '{"campaign_id":2}'
 
-# старт / стоп
+# кампания
+curl -s "${H[@]}" -X POST $BASE/v1/campaigns -d '{"name":"Ретаргет"}'
+curl -s "${H[@]}" -X PUT $BASE/v1/campaigns/2/bases -d '{"ids":[3,4]}'
+curl -s "${H[@]}" -X PUT $BASE/v1/campaigns/2/accounts -d '{"ids":[1]}'
+curl -s "${H[@]}" -X PUT $BASE/v1/campaigns/2/texts -d '{"ids":[1,2]}'
+curl -s "${H[@]}" -X POST $BASE/v1/campaigns/2/start
+curl -s "${H[@]}" $BASE/v1/campaigns/2/status
+curl -s "${H[@]}" -X POST $BASE/v1/campaigns/2/stop
+
+# edit оффера
+curl -s "${H[@]}" -X PATCH $BASE/v1/texts/1 \
+  -d '{"title":"A v2","text":"Обновлённый текст…"}'
+
+# основная рассылка
 curl -s "${H[@]}" -X POST $BASE/v1/run/start
-curl -s "${H[@]}" $BASE/v1/run/status
 curl -s "${H[@]}" -X POST $BASE/v1/run/stop
 ```
 
@@ -776,16 +899,15 @@ curl -s "${H[@]}" -X POST $BASE/v1/run/stop
 
 ## Совместимость с ботом
 
-Бот (`main.py`) и API (`api_main.py`) используют **одну и ту же** SQLite `data/outreach.db`.
+Бот (`main.py`) и API (`api_main.py`) используют **одну** SQLite `data/outreach.db`.
 
-- Управлять можно и из Telegram, и через API.
-- Рассылку лучше стартовать **либо** из бота, **либо** из API (один runtime на процесс).  
-  Если оба процесса запущены отдельно — у каждого свой in-memory `runtime`: стартуйте рассылку в том процессе, которым управляете, либо держите run только в одном из них.
+- Управление из Telegram и через API.
+- У каждого процесса свой in-memory `runtime`: стартуйте run/campaign в том процессе, которым управляете.
 
-Рекомендация для prod: бот для оператора в Telegram, API для интеграций/панели; рассылку запускайте из одного места.
+Рекомендация: бот для оператора, API для интеграций; рассылку — из одного места.
 
 ---
 
 ## Версия
 
-`2.1.0` — полный CRUD по всем модулям системы + collect + run + history.
+`2.2.0` — кампании, отдельный сбор (`isolated`), assign баз, edit офферов, полные CRUD + run/history с метками кампаний.

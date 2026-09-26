@@ -5,7 +5,7 @@ from fastapi.responses import Response
 
 from app.ai.contacts import parse_contacts_file, parse_lines, parse_xlsx_all_sheets
 from app.api.deps import get_store, require_api_key
-from app.api.schemas import BaseCreate, BaseRename, ContactsAdd
+from app.api.schemas import BaseAssign, BaseCreate, BaseFlags, BaseRename, ContactsAdd
 from app.api.serialize import to_dict
 from app.store import Store
 from app.utils.export import contacts_to_csv, contacts_to_txt, contacts_to_xlsx
@@ -26,7 +26,10 @@ async def list_bases(store: Store = Depends(get_store)):
 
 @router.post("")
 async def create_base(body: BaseCreate, store: Store = Depends(get_store)):
-    base = await store.add_base(body.name)
+    isolated = 1 if body.isolated else 0
+    # отдельная база — не в основной очереди (isolated), enabled для совместимости
+    enabled = 0 if isolated else (1 if body.enabled else 0)
+    base = await store.add_base(body.name, isolated=isolated, enabled=enabled)
     return {"ok": True, "base": to_dict(base)}
 
 
@@ -46,6 +49,29 @@ async def rename_base(base_id: int, body: BaseRename, store: Store = Depends(get
     if not base:
         raise HTTPException(404, "Base not found")
     return {"ok": True, "base": to_dict(base)}
+
+
+@router.patch("/{base_id}/flags")
+async def set_base_flags(base_id: int, body: BaseFlags, store: Store = Depends(get_store)):
+    if not await store.get_base(base_id):
+        raise HTTPException(404, "Base not found")
+    base = None
+    if body.isolated is not None:
+        base = await store.set_base_isolated(base_id, body.isolated)
+    if body.enabled is not None:
+        base = await store.set_base_enabled(base_id, body.enabled)
+    return {"ok": True, "base": to_dict(base or await store.get_base(base_id))}
+
+
+@router.post("/{base_id}/assign")
+async def assign_base(base_id: int, body: BaseAssign, store: Store = Depends(get_store)):
+    if not await store.get_base(base_id):
+        raise HTTPException(404, "Base not found")
+    if not await store.get_campaign(body.campaign_id):
+        raise HTTPException(404, "Campaign not found")
+    detail = await store.assign_base_to_campaign(base_id, body.campaign_id)
+    base = await store.get_base(base_id)
+    return {"ok": True, "detail": detail, "base": to_dict(base)}
 
 
 @router.post("/{base_id}/toggle")
