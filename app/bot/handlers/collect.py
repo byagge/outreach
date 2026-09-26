@@ -506,13 +506,14 @@ async def cb_col_acc(query: CallbackQuery, callback_data: MenuCB, state: FSMCont
         await query.answer("Нет аккаунта", show_alert=True)
         return
     await query.answer("Собираю…")
+    sep_line = "Отдельная база.\n" if separate else ""
     await safe_edit(
         query,
         prompt_html(
             "Сбор ЛС",
             f"Аккаунт <b>{escape(acc.label)}</b>\n"
             f"Режим: <b>{MODE_DM_LABEL.get(mode, mode)}</b>\n"
-            f"{'Отдельная база.\n' if separate else ''}"
+            f"{sep_line}"
             "Стоп сохранит уже найденное.",
             "robot",
         ),
