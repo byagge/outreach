@@ -91,9 +91,20 @@ class ContactFinish(BaseModel):
 class TextCreate(BaseModel):
     text: str = ""
     title: str = ""
-    entities: list[dict[str, Any]] = Field(default_factory=list)
+    entities: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Telegram entities. Premium emoji: "
+            '{"type":"custom_emoji","offset":0,"length":2,"custom_emoji_id":"5278…"} '
+            "или маркеры в text: {e:5278…}"
+        ),
+    )
     photo_path: str = ""
     enabled: int = 1
+    expand_emoji_markers: bool = Field(
+        default=True,
+        description="Раскрывать {e:ID} / {{emoji:ID}} в тексте в premium emoji",
+    )
 
 
 class TextUpdate(BaseModel):
@@ -103,6 +114,7 @@ class TextUpdate(BaseModel):
     entities_json: str | None = None
     photo_path: str | None = None
     enabled: int | None = None
+    expand_emoji_markers: bool | None = True
 
 
 class BlocklistAdd(BaseModel):

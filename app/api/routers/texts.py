@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
@@ -9,6 +9,7 @@ from app.api.schemas import TextCreate, TextUpdate
 from app.api.serialize import to_dict
 from app.config import TEXTS_DIR
 from app.store import Store
+from app.utils.entities import prepare_offer_text
 
 router = APIRouter(prefix="/texts", tags=["texts"], dependencies=[Depends(require_api_key)])
 
@@ -45,9 +46,14 @@ async def get_text(text_id: int, store: Store = Depends(get_store)):
 async def create_text(body: TextCreate, store: Store = Depends(get_store)):
     if not (body.text or "").strip() and not (body.photo_path or "").strip():
         raise HTTPException(400, "Нужен text или photo_path")
-    item = await store.add_text(
+    text, entities = prepare_offer_text(
         body.text,
         body.entities,
+        expand_markers=body.expand_emoji_markers,
+    )
+    item = await store.add_text(
+        text,
+        entities,
         photo_path=body.photo_path,
         title=body.title or "",
     )
@@ -72,19 +78,38 @@ async def create_text_with_photo(
         photo_path = str(dest)
     if not text.strip() and not photo_path:
         raise HTTPException(400, "Нужен text или photo")
-    item = await store.add_text(text, [], photo_path=photo_path, title=title or f"вариант")
+    text, entities = prepare_offer_text(text, [])
+    item = await store.add_text(text, entities, photo_path=photo_path, title=title or "вариант")
     return {"ok": True, "text": to_dict(item)}
 
 
 @router.patch("/{text_id}")
 async def update_text(text_id: int, body: TextUpdate, store: Store = Depends(get_store)):
     data = body.model_dump(exclude_none=True)
-    if "entities" in data and "entities_json" not in data:
-        import json
-
-        data["entities_json"] = json.dumps(data.pop("entities"), ensure_ascii=False)
-    elif "entities" in data:
-        data.pop("entities")
+    expand = data.pop("expand_emoji_markers", True)
+    if expand is None:
+        expand = True
+    if "text" in data or "entities" in data or "entities_json" in data:
+        raw_text = data.get("text")
+        if raw_text is None:
+            existing = await store.get_text(text_id)
+            raw_text = existing.text if existing else ""
+        ents = data.pop("entities", None)
+        if ents is None and "entities_json" in data:
+            try:
+                ents = json.loads(data.pop("entities_json") or "[]")
+            except json.JSONDecodeError:
+                ents = []
+                data.pop("entities_json", None)
+        elif "entities_json" in data:
+            data.pop("entities_json")
+        text, entities = prepare_offer_text(
+            raw_text or "",
+            ents,
+            expand_markers=bool(expand),
+        )
+        data["text"] = text
+        data["entities_json"] = json.dumps(entities, ensure_ascii=False)
     item = await store.update_text(text_id, **data)
     if not item:
         raise HTTPException(404, "Text not found")

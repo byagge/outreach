@@ -8,6 +8,7 @@ from app.api.serialize import to_dict
 from app.jobs.outreach import build_campaign_scope, run_outreach
 from app.jobs.runtime import runtime
 from app.store import Store
+from app.utils.entities import prepare_offer_text
 
 router = APIRouter(
     prefix="/campaigns", tags=["campaigns"], dependencies=[Depends(require_api_key)]
@@ -156,9 +157,14 @@ async def create_campaign_text(
         raise HTTPException(400, "Для Основного создавайте офферы через POST /v1/texts")
     if not (body.text or "").strip() and not (body.photo_path or "").strip():
         raise HTTPException(400, "Нужен text или photo_path")
-    item = await store.add_text(
+    text, entities = prepare_offer_text(
         body.text,
         body.entities,
+        expand_markers=body.expand_emoji_markers,
+    )
+    item = await store.add_text(
+        text,
+        entities,
         photo_path=body.photo_path,
         title=body.title or "",
         campaign_id=campaign_id,

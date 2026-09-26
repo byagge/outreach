@@ -528,20 +528,55 @@
 ```json
 {
   "title": "оффер A",
-  "text": "Привет! …",
+  "text": "Привет! {e:5278611606756942667} …",
   "entities": [],
   "photo_path": "",
-  "enabled": 1
+  "enabled": 1,
+  "expand_emoji_markers": true
 }
 ```
 
 Нужен непустой `text` **или** `photo_path`.
 
+#### Premium emoji
+
+Два способа передать custom emoji по ID:
+
+**1. Маркер в тексте** (удобнее):
+
+```json
+{ "text": "Привет {e:5278611606756942667} мир" }
+```
+
+Также: `{{emoji:ID}}`, `{ce:ID}`, `{custom_emoji:ID}`.  
+Маркер заменяется на 😀, а в `entities` пишется `custom_emoji` с UTF-16 offset/length.  
+Отключить: `"expand_emoji_markers": false`.
+
+**2. Явный entity:**
+
+```json
+{
+  "text": "Привет 😀 мир",
+  "entities": [
+    {
+      "type": "custom_emoji",
+      "offset": 7,
+      "length": 2,
+      "custom_emoji_id": "5278611606756942667"
+    }
+  ]
+}
+```
+
+`offset`/`length` — в UTF-16 code units (как в Telegram). Алиасы типа: `premium_emoji`, `emoji`, `ce`; id также: `document_id`, `emoji_id`, `id`.
+
+Аккаунт-отправитель должен иметь Premium (или доступ к этому emoji), иначе Telegram не отрисует.
+
 ---
 
 ### `POST /v1/texts/upload`
 
-Multipart: `text`, `title`, опционально `file` (фото).
+Multipart: `text`, `title`, опционально `file` (фото). В `text` тоже работают маркеры `{e:ID}`.
 
 ---
 
@@ -552,15 +587,16 @@ Multipart: `text`, `title`, опционально `file` (фото).
 ```json
 {
   "title": "оффер A v2",
-  "text": "Новый текст…",
+  "text": "Новый текст с {e:5278611606756942667}",
   "entities": [],
   "photo_path": "",
-  "enabled": 1
+  "enabled": 1,
+  "expand_emoji_markers": true
 }
 ```
 
-Поля опциональны. Можно передать `entities` (массив) **или** `entities_json` (строка).
-
+Поля опциональны. Можно передать `entities` (массив) **или** `entities_json` (строка).  
+При изменении `text` / `entities` маркеры `{e:ID}` раскрываются так же, как в `POST`.
 ---
 
 ### `POST /v1/texts/{text_id}/upload`
@@ -658,8 +694,10 @@ Multipart: `text`, `title`, опционально `file` (фото).
 Создать **отдельный** оффер кампании (`campaign_id` проставляется). В основную рассылку и `GET /v1/texts` (по умолчанию) **не попадает**.
 
 ```json
-{ "title": "камп A", "text": "Текст только для кампании…", "entities": [], "enabled": 1 }
+{ "title": "камп A", "text": "Текст только для кампании {e:5278611606756942667}", "entities": [], "enabled": 1 }
 ```
+
+Те же правила premium emoji, что у `POST /v1/texts`.
 
 ---
 
