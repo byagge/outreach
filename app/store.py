@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS texts (
     entities_json TEXT NOT NULL DEFAULT '[]',
     photo_path TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    campaign_id INTEGER,
     created_at TEXT NOT NULL
 );
 
@@ -344,6 +345,7 @@ def _collect_run(row: aiosqlite.Row) -> CollectRun:
 
 
 def _text(row: aiosqlite.Row) -> TextVariant:
+    keys = row.keys()
     return TextVariant(
         id=row["id"],
         title=row["title"] or "",
@@ -351,6 +353,7 @@ def _text(row: aiosqlite.Row) -> TextVariant:
         entities_json=row["entities_json"] or "[]",
         photo_path=row["photo_path"] or "",
         enabled=int(row["enabled"] or 0),
+        campaign_id=row["campaign_id"] if "campaign_id" in keys else None,
         created_at=row["created_at"] or "",
     )
 
@@ -414,6 +417,10 @@ class Store:
             await db.execute(
                 "ALTER TABLE sends ADD COLUMN campaign_name TEXT NOT NULL DEFAULT ''"
             )
+
+        text_cols = await _cols("texts")
+        if "campaign_id" not in text_cols:
+            await db.execute("ALTER TABLE texts ADD COLUMN campaign_id INTEGER")
 
         cur = await db.execute("SELECT COUNT(*) FROM contact_bases")
         row = await cur.fetchone()
@@ -534,7 +541,7 @@ class Store:
                 errors=await _n("SELECT COUNT(*) FROM contacts WHERE status='error'"),
                 skipped=await _n("SELECT COUNT(*) FROM contacts WHERE status='skip'"),
                 texts=await _n(
-                    "SELECT COUNT(*) FROM texts WHERE enabled=1 AND "
+                    "SELECT COUNT(*) FROM texts WHERE enabled=1 AND campaign_id IS NULL AND "
                     "(TRIM(text) != '' OR TRIM(photo_path) != '')"
                 ),
                 bases=await _n("SELECT COUNT(*) FROM contact_bases"),
@@ -966,11 +973,27 @@ class Store:
             await db.commit()
             return int(cur.rowcount or 0)
 
-    async def list_texts(self, enabled_only: bool = False) -> list[TextVariant]:
-        sql = "SELECT * FROM texts"
+    async def list_texts(
+        self,
+        enabled_only: bool = False,
+        *,
+        campaign_id: int | None = None,
+        shared_only: bool = True,
+    ) -> list[TextVariant]:
+        """
+        shared_only=True (по умолчанию) — только общие офферы (основная рассылка).
+        campaign_id=N — только офферы этой кампании (owned).
+        shared_only=False и campaign_id=None — все офферы.
+        """
+        sql = "SELECT * FROM texts WHERE 1=1"
         args: list[Any] = []
+        if campaign_id is not None:
+            sql += " AND campaign_id=?"
+            args.append(campaign_id)
+        elif shared_only:
+            sql += " AND campaign_id IS NULL"
         if enabled_only:
-            sql += " WHERE enabled=1"
+            sql += " AND enabled=1"
         sql += " ORDER BY id"
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -990,22 +1013,36 @@ class Store:
         entities: list[dict[str, Any]],
         photo_path: str = "",
         title: str = "",
+        *,
+        campaign_id: int | None = None,
+        link_to_campaign: bool = True,
     ) -> TextVariant:
         async with self._connect() as db:
             cur = await db.execute(
-                "INSERT INTO texts(title, text, entities_json, photo_path, created_at) "
-                "VALUES(?,?,?,?,?)",
+                "INSERT INTO texts(title, text, entities_json, photo_path, enabled, "
+                "campaign_id, created_at) VALUES(?,?,?,?,?,?,?)",
                 (
                     title,
                     text,
                     json.dumps(entities, ensure_ascii=False),
                     photo_path,
+                    1,
+                    campaign_id,
                     _now(),
                 ),
             )
             await db.commit()
-            pk = cur.lastrowid
-        item = await self.get_text(int(pk))
+            pk = int(cur.lastrowid)
+            if campaign_id and link_to_campaign:
+                try:
+                    await db.execute(
+                        "INSERT INTO campaign_texts(campaign_id, text_id) VALUES(?,?)",
+                        (campaign_id, pk),
+                    )
+                    await db.commit()
+                except aiosqlite.IntegrityError:
+                    pass
+        item = await self.get_text(pk)
         assert item is not None
         return item
 
@@ -1741,6 +1778,7 @@ class Store:
                 "DELETE FROM campaign_accounts WHERE campaign_id=?", (campaign_id,)
             )
             await db.execute("DELETE FROM campaign_texts WHERE campaign_id=?", (campaign_id,))
+            await db.execute("DELETE FROM texts WHERE campaign_id=?", (campaign_id,))
             await db.execute("DELETE FROM campaigns WHERE id=? AND is_main=0", (campaign_id,))
             await db.commit()
         return True

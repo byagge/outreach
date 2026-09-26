@@ -59,3 +59,9 @@ class AddCampaign(StatesGroup):
 
 class RenameCampaign(StatesGroup):
     name = State()
+
+
+class CampaignText(StatesGroup):
+    add = State()
+    edit = State()
+    title = State()

@@ -14,8 +14,22 @@ router = APIRouter(prefix="/texts", tags=["texts"], dependencies=[Depends(requir
 
 
 @router.get("")
-async def list_texts(enabled_only: bool = False, store: Store = Depends(get_store)):
-    items = await store.list_texts(enabled_only=enabled_only)
+async def list_texts(
+    enabled_only: bool = False,
+    shared_only: bool = True,
+    campaign_id: int | None = None,
+    store: Store = Depends(get_store),
+):
+    """
+    По умолчанию — только общие офферы (основная рассылка).
+    campaign_id=N — офферы этой кампании.
+    shared_only=false без campaign_id — все.
+    """
+    items = await store.list_texts(
+        enabled_only=enabled_only,
+        campaign_id=campaign_id,
+        shared_only=shared_only if campaign_id is None else False,
+    )
     return {"ok": True, "items": to_dict(items), "total": len(items)}
 
 

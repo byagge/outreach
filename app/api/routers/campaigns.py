@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_store, require_api_key
-from app.api.schemas import CampaignCreate, CampaignIdsBody, CampaignRename
+from app.api.schemas import CampaignCreate, CampaignIdsBody, CampaignRename, TextCreate
 from app.api.serialize import to_dict
 from app.jobs.outreach import build_campaign_scope, run_outreach
 from app.jobs.runtime import runtime
@@ -142,6 +142,47 @@ async def set_texts(
         raise HTTPException(400, "У Основного — все enabled офферы")
     ids = await store.set_campaign_texts(campaign_id, body.ids)
     return {"ok": True, "text_ids": ids}
+
+
+@router.post("/{campaign_id}/texts")
+async def create_campaign_text(
+    campaign_id: int, body: TextCreate, store: Store = Depends(get_store)
+):
+    """Создать оффер только для этой кампании (не попадёт в основную рассылку)."""
+    camp = await store.get_campaign(campaign_id)
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    if camp.is_main:
+        raise HTTPException(400, "Для Основного создавайте офферы через POST /v1/texts")
+    if not (body.text or "").strip() and not (body.photo_path or "").strip():
+        raise HTTPException(400, "Нужен text или photo_path")
+    item = await store.add_text(
+        body.text,
+        body.entities,
+        photo_path=body.photo_path,
+        title=body.title or "",
+        campaign_id=campaign_id,
+    )
+    if body.enabled == 0:
+        item = await store.update_text(item.id, enabled=0)
+    return {"ok": True, "text": to_dict(item)}
+
+
+@router.get("/{campaign_id}/texts")
+async def list_campaign_texts(campaign_id: int, store: Store = Depends(get_store)):
+    camp = await store.get_campaign(campaign_id)
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    owned = await store.list_texts(campaign_id=campaign_id, shared_only=False)
+    linked_ids = await store.campaign_text_ids(campaign_id)
+    shared_all = await store.list_texts(shared_only=True)
+    shared_linked = [t for t in shared_all if t.id in set(linked_ids)]
+    return {
+        "ok": True,
+        "owned": to_dict(owned),
+        "shared_linked": to_dict(shared_linked),
+        "text_ids": linked_ids,
+    }
 
 
 @router.post("/{campaign_id}/bases/{base_id}/toggle")

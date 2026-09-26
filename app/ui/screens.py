@@ -236,8 +236,14 @@ def text_html(item: TextVariant) -> str:
     ents = entities_loads(item.entities_json)
     emoji_n = sum(1 for e in ents if "emoji" in str(e.get("type")))
     preview = escape((item.text or "")[:500] or "—")
+    scope = (
+        f"{pe('folder')} оффер кампании <code>#{item.campaign_id}</code>\n"
+        if item.campaign_id
+        else f"{pe('mega')} общий оффер (основная рассылка)\n"
+    )
     return (
         f"{pe('mega')} <b>{escape(item.title or f'вариант #{item.id}')}</b>\n\n"
+        f"{scope}"
         f"{pe('pin')} {len(item.text or '')} симв. | premium: {emoji_n} | "
         f"фото: {on_off(bool(item.photo_path))}\n"
         f"{pe('check') if item.enabled else pe('block')} "
@@ -447,7 +453,8 @@ def campaign_html(
             f"{pe('user')} аккаунты ({accounts_n}): {_names(account_names, 'не выбраны')}",
             f"{pe('mega')} офферы ({texts_n}): {_names(text_names, 'не выбраны')}\n",
             f"Готовность: {checklist}",
-            f"\n{pe('pin')} Выберите ресурсы кнопками ниже, затем Запустить.",
+            f"\n{pe('pin')} Базы / аккаунты / офферы — кнопки ниже. "
+            f"Свои офферы кампании создаются в «Офферы» (не в основной пул).",
         ]
     )
 

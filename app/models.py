@@ -119,7 +119,12 @@ class TextVariant:
     entities_json: str = "[]"
     photo_path: str = ""
     enabled: int = 1
+    campaign_id: int | None = None  # None = общий (основная рассылка)
     created_at: str = ""
+
+    @property
+    def is_shared(self) -> bool:
+        return self.campaign_id is None
 
 
 @dataclass

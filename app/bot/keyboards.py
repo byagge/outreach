@@ -517,31 +517,69 @@ def campaign_pick_accounts_kb(
 
 
 def campaign_pick_texts_kb(
-    texts: list[TextVariant], selected: set[int], campaign_id: int, page: int = 0
+    owned: list[TextVariant],
+    shared: list[TextVariant],
+    selected_shared: set[int],
+    campaign_id: int,
+    page: int = 0,
+    *,
+    mode: str = "owned",  # owned | share
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [
-            ib("Все", "camp_tall", campaign_id, icon="check"),
-            ib("Снять", "camp_tclr", campaign_id, icon="block"),
-        ]
-    ]
-    chunk = texts[page * 8 : page * 8 + 8]
-    for item in chunk:
-        on = item.id in selected
-        mark = "✓ " if on else "· "
-        title = (item.title or f"#{item.id}")[:24]
+    """Офферы кампании: свои (owned) + прикрепление общих (share)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if mode == "share":
         rows.append(
             [
-                ib(
-                    f"{mark}{title}",
-                    "camp_tt",
-                    campaign_id,
-                    p=item.id,
-                    icon="check" if on else "block",
-                )
+                ib("Все общие", "camp_tall", campaign_id, icon="check"),
+                ib("Снять общие", "camp_tclr", campaign_id, icon="block"),
             ]
         )
-    total_pages = max(1, (len(texts) + 7) // 8)
+        chunk = shared[page * 8 : page * 8 + 8]
+        for item in chunk:
+            on = item.id in selected_shared
+            mark = "✓ " if on else "· "
+            title = (item.title or f"#{item.id}")[:24]
+            rows.append(
+                [
+                    ib(
+                        f"{mark}{title}",
+                        "camp_tt",
+                        campaign_id,
+                        p=item.id,
+                        icon="check" if on else "block",
+                    )
+                ]
+            )
+        total_pages = max(1, (len(shared) + 7) // 8)
+        if total_pages > 1:
+            prev = (
+                ib("Назад", "camp_tshare", campaign_id, p=page - 1, icon="down")
+                if page > 0
+                else _off("Назад", "block")
+            )
+            nxt = (
+                ib("Вперёд", "camp_tshare", campaign_id, p=page + 1, icon="up")
+                if page + 1 < total_pages
+                else _off("Вперёд", "block")
+            )
+            rows.append(
+                [
+                    prev,
+                    ib(f"{page + 1}/{total_pages}", "camp_tshare", campaign_id, p=page, icon="stack"),
+                    nxt,
+                ]
+            )
+        rows.append([ib("К офферам кампании", "camp_txs", campaign_id, icon="mega")])
+        rows.append(home_row())
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    rows.append([ib("Добавить оффер", "camp_tx_add", campaign_id, icon="inbox")])
+    chunk = owned[page * 8 : page * 8 + 8]
+    for item in chunk:
+        title = (item.title or f"#{item.id}")[:26]
+        icon = "mega" if item.enabled else "block"
+        rows.append([ib(f"⊕ {title}", "camp_tx", item.id, p=campaign_id, icon=icon)])
+    total_pages = max(1, (len(owned) + 7) // 8)
     if total_pages > 1:
         prev = (
             ib("Назад", "camp_txs", campaign_id, p=page - 1, icon="down")
@@ -556,8 +594,36 @@ def campaign_pick_texts_kb(
         rows.append(
             [prev, ib(f"{page + 1}/{total_pages}", "camp_txs", campaign_id, p=page, icon="stack"), nxt]
         )
+    rows.append([ib("Прикрепить из общих", "camp_tshare", campaign_id, icon="stack")])
     rows.append([ib("К кампании", "camp", campaign_id, icon="folder")])
     rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def campaign_text_kb(item: TextVariant, campaign_id: int) -> InlineKeyboardMarkup:
+    toggle = (
+        ib("Выключить", "camp_tx_on", item.id, p=campaign_id, icon="block")
+        if item.enabled
+        else ib("Включить", "camp_tx_on", item.id, p=campaign_id, icon="check")
+    )
+    rows: list[list[InlineKeyboardButton]] = [
+        [toggle],
+        [
+            ib("Изменить текст", "camp_tx_edit", item.id, p=campaign_id, icon="hammer"),
+            ib("Название", "camp_tx_ren", item.id, p=campaign_id, icon="bookmark"),
+        ],
+    ]
+    if item.photo_path:
+        rows.append(
+            [ib("Убрать фото", "camp_tx_nophoto", item.id, p=campaign_id, icon="block")]
+        )
+    rows.extend(
+        [
+            [ib("Удалить", "camp_tx_del", item.id, p=campaign_id, icon="warn")],
+            [ib("К офферам", "camp_txs", campaign_id, icon="mega")],
+            home_row(),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
