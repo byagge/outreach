@@ -318,6 +318,7 @@ def collect_kb(accounts: list[Account] | None = None, running: bool = False) -> 
         rows.append([ib("Стоп сбора (сохранить)", "col_stop", icon="down")])
     rows.extend(
         [
+            [ib("Дорогие контакты (ИИ)", "col_prem", icon="crown")],
             [ib("Все участники чата", "col_mode", 0, icon="users")],
             [ib("Только писавшие", "col_mode", 1, icon="search")],
             [ib("Кому писали (ЛС)", "col_dm", 0, icon="mega")],
@@ -329,6 +330,45 @@ def collect_kb(accounts: list[Account] | None = None, running: bool = False) -> 
             home_row(),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_premium_lang_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [ib("Русский", "col_plang", 0, icon="users")],
+            [ib("English", "col_plang", 1, icon="at")],
+            [ib("Назад к сбору", "collect", icon="down")],
+            home_row(),
+        ]
+    )
+
+
+def collect_premium_accounts_kb(accounts: list[Account], lang_i: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for a in accounts:
+        if not a.has_telethon:
+            continue
+        label = (f"@{a.username}" if a.username else a.label)[:28]
+        rows.append([ib(label, "col_pacc", a.id, p=lang_i, icon="user")])
+    rows.append([ib("Назад", "col_prem", icon="down")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def collect_premium_done_kb(
+    premium_id: int,
+    coders_id: int,
+    other_id: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [ib("Экспорт ★ дорогие", "col_exp", premium_id, icon="crown")],
+        [ib("Экспорт кодеры", "col_exp", coders_id, icon="term")],
+        [ib("Экспорт прочие", "col_exp", other_id, icon="stack")],
+        [ib("Назначить ★ в кампанию", "asg_camp", premium_id, icon="check")],
+        [ib("К сбору", "collect", icon="search")],
+        home_row(),
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

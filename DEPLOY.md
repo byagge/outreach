@@ -74,6 +74,22 @@ API_KEY=сгенерируйте_длинный_секрет
 API_HOST=127.0.0.1
 API_PORT=8091
 API_PUBLIC_URL=https://outreachapi.arix.vu
+
+# Lead Intelligence (обязательно для ★ дорогих контактов)
+LLM_ENABLED=true
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-4o
+LLM_BATCH_SIZE=3
+LLM_MAX_POSTS=50
+LLM_TIMEOUT=180
+PREMIUM_SCAN_ALL_CHATS=true
+PREMIUM_MESSAGES_PER_CHAT=8000
+PREMIUM_MAX_MSGS_PER_USER=60
+PREMIUM_CHAT_TOP_K=80
+PREMIUM_SCORE_THRESHOLD=70
+PREMIUM_DISCOVER_OPEN=true
+PREMIUM_DISCOVER_JOIN_MAX=8
 ```
 
 Секрет:

@@ -150,6 +150,15 @@ class CollectDmBody(BaseModel):
     isolated: bool = False
 
 
+class CollectPremiumBody(BaseModel):
+    language: str = Field(default="ru", description="ru | en")
+    account_id: int | None = None
+    messages_per_chat: int = Field(default=8000, ge=100, le=20000)
+    use_llm: bool | None = None
+    discover_open: bool | None = None
+    max_discover_join: int = Field(default=8, ge=0, le=30)
+
+
 class MailingBaseBody(BaseModel):
     name: str = "Итоговая рассылка"
     source_base_id: int | None = None

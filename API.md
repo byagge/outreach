@@ -850,6 +850,19 @@ Pending-контакты с совпадением помечаются `skip`.
 
 ---
 
+### `POST /v1/collect/premium`
+
+**Quality Lead Intelligence:**
+
+- Полный deep-scan групп (до `PREMIUM_MESSAGES_PER_CHAT`, не 10–20)
+- Полные тексты постов в сильную модель (`gpt-4o` / Claude)
+- 1 LLM-вызов = досье + score по поведению
+- Экономия только: «ок/лол», дубли, пустые профили; батч 2–3
+
+Если групп больше `PREMIUM_CHAT_TOP_K` — LLM-rank по ~120 постам, затем full scan топа.
+
+---
+
 ### `POST /v1/collect/mailing-base`
 
 Итоговая база: pending из включённых **не-isolated** баз (или одной `source_base_id`), без дублей / банбазы / blocklist / «кому писали» / `sent`.

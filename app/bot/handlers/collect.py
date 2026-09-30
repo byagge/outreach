@@ -17,6 +17,9 @@ from app.bot.keyboards import (
     collect_chat_accounts_kb,
     collect_done_kb,
     collect_kb,
+    collect_premium_accounts_kb,
+    collect_premium_done_kb,
+    collect_premium_lang_kb,
     collect_running_kb,
     collect_separate_kb,
     confirm_kb,
@@ -24,15 +27,23 @@ from app.bot.keyboards import (
 from app.bot.render import ask_input, finish_input, safe_edit
 from app.bot.states import Banwords as BanwordsState
 from app.bot.states import CollectChat
+from app.config import get_settings
 from app.context import ctx
 from app.jobs.runtime import runtime
 from app.tg.client import telethon_client
-from app.tg.collect import CollectResult, collect_dm_history, collect_from_chat
+from app.tg.collect import (
+    CollectResult,
+    PremiumCollectResult,
+    collect_dm_history,
+    collect_from_chat,
+)
+from app.tg.premium_collect import collect_premium_from_groups
 from app.ui.screens import (
     banbase_html,
     banwords_html,
     bases_html,
     collect_html,
+    collect_premium_html,
     collect_separate_html,
     prompt_html,
 )
@@ -43,12 +54,93 @@ MODE_CHAT = {0: "all", 1: "writers"}
 MODE_CHAT_LABEL = {"all": "все участники", "writers": "только писавшие"}
 MODE_DM = {0: "messaged", 1: "replied"}
 MODE_DM_LABEL = {"messaged": "кому писали", "replied": "кто отвечал"}
+PREM_LANG = {0: "ru", 1: "en"}
+PREM_LANG_LABEL = {"ru": "русский", "en": "english"}
 
 
 async def _collect_screen():
     accounts = await ctx.store.list_accounts()
     running = runtime.is_running("collect", 0)
     return collect_html(accounts, running=running), collect_kb(accounts, running=running)
+
+
+async def _save_premium_result(
+    result: PremiumCollectResult,
+    *,
+    language: str,
+    account_id: int,
+    account_label: str,
+    source: str = "bot",
+) -> dict[str, int]:
+    """Три isolated-базы + journal. premium enabled=1 как основная ценность."""
+    stamp = account_label[:20]
+    lang = PREM_LANG_LABEL.get(language, language)
+    suffix = " (стоп)" if result.stopped else ""
+
+    async def _one(name: str, items: list, *, enabled: int) -> tuple[int, int]:
+        base = await ctx.store.add_base(
+            (name + suffix)[:60],
+            isolated=1,
+            enabled=enabled,
+        )
+        added = 0
+        for item in items:
+            a, _ = await ctx.store.add_contacts([item], base.id)
+            added += a
+        return base.id, added
+
+    prem_id, prem_n = await _one(
+        f"★ Дорогие [{lang}]: {stamp}",
+        result.premium,
+        enabled=1,
+    )
+    cod_id, cod_n = await _one(
+        f"Кодеры [{lang}]: {stamp}",
+        result.coders,
+        enabled=0,
+    )
+    oth_id, oth_n = await _one(
+        f"Прочие [{lang}]: {stamp}",
+        result.other,
+        enabled=0,
+    )
+
+    banned_n = 0
+    for item in result.banned:
+        reason = result.banned_reasons.get(f"{item.kind}:{item.value}", "banword")
+        ok = await ctx.store.add_ban_contact(
+            item.kind,
+            item.value,
+            display=item.display,
+            reason=reason,
+            source_base_id=prem_id,
+        )
+        if ok:
+            banned_n += 1
+
+    await ctx.store.add_collect_run(
+        source=source,
+        kind="premium",
+        mode=f"lang:{language}",
+        target=account_label,
+        title=f"★ {prem_n} / код {cod_n} / др {oth_n}",
+        account_id=account_id,
+        base_id=prem_id,
+        added=prem_n + cod_n + oth_n,
+        banned=banned_n,
+        stopped=result.stopped,
+        notes="; ".join(result.notes[:8])
+        + f"; bases={prem_id},{cod_id},{oth_id}",
+    )
+    return {
+        "premium_id": prem_id,
+        "coders_id": cod_id,
+        "other_id": oth_id,
+        "premium_n": prem_n,
+        "coders_n": cod_n,
+        "other_n": oth_n,
+        "banned_n": banned_n,
+    }
 
 
 async def _settings_screen(page: int = 0):
@@ -151,6 +243,223 @@ async def cb_collect(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     text, markup = await _collect_screen()
     await safe_edit(query, text, markup)
+
+
+@router.callback_query(MenuCB.filter(F.a == "col_prem"))
+async def cb_col_prem(query: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if runtime.is_running("collect", 0):
+        await query.answer("Сбор уже идёт — Стоп", show_alert=True)
+        return
+    await safe_edit(query, collect_premium_html(), collect_premium_lang_kb())
+
+
+@router.callback_query(MenuCB.filter(F.a == "col_plang"))
+async def cb_col_plang(query: CallbackQuery, callback_data: MenuCB, state: FSMContext) -> None:
+    if runtime.is_running("collect", 0):
+        await query.answer("Сбор уже идёт", show_alert=True)
+        return
+    lang = PREM_LANG.get(callback_data.i, "ru")
+    accounts = await ctx.store.list_accounts()
+    live = [a for a in accounts if a.has_telethon]
+    if not live:
+        await query.answer("Нет аккаунтов с session", show_alert=True)
+        return
+    await state.update_data(prem_lang=lang)
+    from app.ai.llm import llm_configured
+
+    cfg = get_settings()
+    if not llm_configured():
+        await safe_edit(
+            query,
+            prompt_html(
+                "Нужен LLM",
+                "Для смыслового отбора нужен API:\n"
+                "• OpenAI <code>gpt-4o</code>\n"
+                "• Anthropic <code>claude-sonnet-4-5</code>\n"
+                "• или OpenRouter\n\n"
+                "В <code>.env</code>:\n"
+                "<code>LLM_ENABLED=true</code>\n"
+                "<code>LLM_BASE_URL=...</code>\n"
+                "<code>LLM_API_KEY=...</code>\n"
+                "<code>LLM_MODEL=...</code>",
+                "warn",
+            ),
+            collect_premium_lang_kb(),
+        )
+        return
+    llm_note = f"LLM: <code>{escape(cfg.llm_model)}</code>"
+    disc = (
+        f"Поиск открытых: до {cfg.premium_discover_join_max} join"
+        if cfg.premium_discover_open
+        else "Поиск открытых: выкл"
+    )
+    text = prompt_html(
+        "Дорогие контакты",
+        f"Язык: <b>{PREM_LANG_LABEL[lang]}</b>\n"
+        f"{llm_note}\n"
+        f"{disc}\n\n"
+        "ИИ читает смысл постов (не ключи).\n"
+        "Выберите аккаунт:",
+        "crown",
+    )
+    await safe_edit(query, text, collect_premium_accounts_kb(accounts, callback_data.i))
+
+
+@router.callback_query(MenuCB.filter(F.a == "col_pacc"))
+async def cb_col_pacc(query: CallbackQuery, callback_data: MenuCB, state: FSMContext) -> None:
+    if runtime.is_running("collect", 0):
+        await query.answer("Сбор уже идёт", show_alert=True)
+        return
+    lang = PREM_LANG.get(callback_data.p, "ru")
+    data = await state.get_data()
+    lang = data.get("prem_lang", lang)
+    await state.clear()
+    acc = await _pick_account(callback_data.i)
+    if not acc:
+        await query.answer("Нет аккаунта", show_alert=True)
+        return
+    await query.answer("Старт…")
+    cfg = get_settings()
+    from app.ai.llm import llm_configured
+
+    if not llm_configured():
+        await safe_edit(
+            query,
+            prompt_html(
+                "Нужен LLM",
+                "Заполните LLM_* в .env (OpenAI / Anthropic / OpenRouter).",
+                "warn",
+            ),
+            collect_premium_lang_kb(),
+        )
+        return
+    await safe_edit(
+        query,
+        prompt_html(
+            "Дорогие контакты",
+            f"Аккаунт <b>{escape(acc.label)}</b>\n"
+            f"Язык: <b>{PREM_LANG_LABEL.get(lang, lang)}</b>\n"
+            f"Модель: <code>{escape(cfg.llm_model)}</code>\n"
+            f"ИИ читает смысл всех постов…\n"
+            "Стоп сохранит уже найденное.",
+            "crown",
+        ),
+        collect_running_kb(),
+    )
+
+    async def job():
+        proxy = await ctx.store.peek_proxy(acc.id)
+        status = query.message
+
+        async def progress(msg: str) -> None:
+            try:
+                await status.edit_text(
+                    prompt_html(
+                        "Дорогие контакты",
+                        f"{escape(msg)}\nСтоп — сохранить прогресс.",
+                        "crown",
+                    ),
+                    reply_markup=collect_running_kb(),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+        try:
+            async with telethon_client(acc.telethon_session, proxy) as client:
+                result = await collect_premium_from_groups(
+                    client,
+                    language=lang,
+                    banwords=await ctx.store.list_banwords(),
+                    messages_per_chat=int(cfg.premium_messages_per_chat),
+                    max_msgs_per_user=int(cfg.premium_max_msgs_per_user),
+                    llm_base_url=cfg.llm_base_url,
+                    llm_model=cfg.llm_model,
+                    llm_api_key=cfg.llm_api_key,
+                    llm_model_refine=cfg.llm_model_refine,
+                    use_llm=True,
+                    discover_open=bool(cfg.premium_discover_open),
+                    max_discover_join=int(cfg.premium_discover_join_max),
+                    premium_threshold=int(cfg.premium_score_threshold),
+                    chat_min_score=int(cfg.premium_chat_min_score),
+                    chat_top_k=int(cfg.premium_chat_top_k),
+                    batch_size=int(cfg.llm_batch_size),
+                    max_posts_to_llm=int(cfg.llm_max_posts),
+                    scan_all_chats=bool(cfg.premium_scan_all_chats),
+                    should_stop=lambda: runtime.cancelled("collect", 0),
+                    on_progress=progress,
+                )
+        except Exception as e:
+            await query.message.answer(
+                prompt_html("Ошибка", escape(str(e)[:500]), "warn"),
+                parse_mode="HTML",
+            )
+            text, markup = await _collect_screen()
+            await query.message.answer(text, reply_markup=markup, parse_mode="HTML")
+            return
+
+        if (
+            not result.premium
+            and not result.coders
+            and not result.other
+            and not result.banned
+        ):
+            await query.message.answer(
+                prompt_html(
+                    "Пусто",
+                    "Не нашли ★ чаты / писавших"
+                    + (" (стоп)" if result.stopped else "")
+                    + f".\n{escape('; '.join(result.notes[:5]))}",
+                    "warn",
+                ),
+                parse_mode="HTML",
+            )
+            text, markup = await _collect_screen()
+            await query.message.answer(text, reply_markup=markup, parse_mode="HTML")
+            return
+
+        ids = await _save_premium_result(
+            result,
+            language=lang,
+            account_id=acc.id,
+            account_label=acc.label,
+        )
+        stop_note = " (стоп — частичное)" if result.stopped else ""
+        from app.ui.emoji import pe
+
+        titles = ", ".join(escape(t)[:28] for t in result.premium_chat_titles[:5])
+        more = (
+            f" +{len(result.premium_chat_titles) - 5}"
+            if len(result.premium_chat_titles) > 5
+            else ""
+        )
+        body = (
+            f"Аккаунт: <b>{escape(acc.label)}</b>{stop_note}\n"
+            f"Язык: <b>{PREM_LANG_LABEL.get(lang, lang)}</b>\n"
+            f"★ чатов: <b>{result.chats_premium}</b> · "
+            f"пропущено: {result.chats_skipped} · "
+            f"join: {result.chats_joined}\n"
+            f"Глубокий скан: <b>{result.chats_scanned}</b>\n"
+            f"{('Чаты: ' + titles + more + chr(10)) if titles else ''}"
+            f"\n{pe('crown')} <b>★ Дорогие:</b> {ids['premium_n']} "
+            f"<code>#{ids['premium_id']}</code>\n"
+            f"Кодеры: {ids['coders_n']} <code>#{ids['coders_id']}</code>\n"
+            f"Прочие: {ids['other_n']} <code>#{ids['other_id']}</code>\n"
+            f"Банбаза: {ids['banned_n']}"
+        )
+        await query.message.answer(
+            prompt_html("Сбор дорогих готов", body, "crown"),
+            reply_markup=collect_premium_done_kb(
+                ids["premium_id"], ids["coders_id"], ids["other_id"]
+            ),
+            parse_mode="HTML",
+        )
+
+    try:
+        runtime.spawn("collect", 0, job())
+    except RuntimeError as e:
+        await query.answer(str(e), show_alert=True)
 
 
 @router.callback_query(MenuCB.filter(F.a == "col_sep"))

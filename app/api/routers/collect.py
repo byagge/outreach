@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.api.deps import get_store, require_api_key
-from app.api.schemas import CollectChatBody, CollectDmBody, MailingBaseBody
+from app.api.schemas import CollectChatBody, CollectDmBody, CollectPremiumBody, MailingBaseBody
 from app.api.serialize import to_dict
+from app.config import get_settings
 from app.store import Store
 from app.tg.client import telethon_client
 from app.tg.collect import collect_dm_history, collect_from_chat
+from app.tg.premium_collect import collect_premium_from_groups
 from app.utils.export import contacts_to_csv, contacts_to_txt, contacts_to_xlsx
 
 router = APIRouter(prefix="/collect", tags=["collect"], dependencies=[Depends(require_api_key)])
@@ -215,6 +217,130 @@ async def collect_dm(body: CollectDmBody, store: Store = Depends(get_store)):
         "stopped": result.stopped,
         "isolated": bool(body.isolated),
         "account_id": acc.id,
+        "run": to_dict(run),
+        "notes": result.notes,
+    }
+
+
+@router.post("/premium")
+async def collect_premium(body: CollectPremiumBody, store: Store = Depends(get_store)):
+    """★ чаты → полные сообщения → 3 базы: premium / coders / other."""
+    lang = (body.language or "ru").lower().strip()
+    if lang not in {"ru", "en"}:
+        raise HTTPException(400, "language: ru | en")
+    acc = await _pick_account(store, body.account_id)
+    cfg = get_settings()
+    if body.use_llm is False:
+        raise HTTPException(
+            400,
+            "use_llm=false больше не поддерживается — нужен смысловой LLM",
+        )
+    use_llm = True
+    if not (cfg.llm_enabled and cfg.llm_base_url and cfg.llm_model and (
+        cfg.llm_api_key or "11434" in cfg.llm_base_url or "localhost" in cfg.llm_base_url
+    )):
+        raise HTTPException(
+            400,
+            "Задайте LLM_ENABLED + LLM_BASE_URL + LLM_MODEL + LLM_API_KEY "
+            "(OpenAI / Anthropic / OpenRouter)",
+        )
+    discover = (
+        cfg.premium_discover_open
+        if body.discover_open is None
+        else bool(body.discover_open)
+    )
+    proxy = await store.peek_proxy(acc.id)
+    banwords = await store.list_banwords()
+    try:
+        async with telethon_client(acc.telethon_session, proxy) as client:
+            result = await collect_premium_from_groups(
+                client,
+                language=lang,
+                banwords=banwords,
+                messages_per_chat=body.messages_per_chat,
+                max_msgs_per_user=int(cfg.premium_max_msgs_per_user),
+                llm_base_url=cfg.llm_base_url,
+                llm_model=cfg.llm_model,
+                llm_api_key=cfg.llm_api_key,
+                llm_model_refine=cfg.llm_model_refine,
+                use_llm=use_llm,
+                discover_open=discover,
+                max_discover_join=body.max_discover_join,
+                premium_threshold=int(cfg.premium_score_threshold),
+                chat_min_score=int(cfg.premium_chat_min_score),
+                chat_top_k=int(cfg.premium_chat_top_k),
+                batch_size=int(cfg.llm_batch_size),
+                max_posts_to_llm=int(cfg.llm_max_posts),
+                scan_all_chats=bool(cfg.premium_scan_all_chats),
+            )
+    except Exception as e:
+        raise HTTPException(502, f"Premium collect failed: {e}") from e
+
+    lang_label = "русский" if lang == "ru" else "english"
+    stamp = acc.label[:20]
+    suffix = " (стоп)" if result.stopped else ""
+
+    async def _bucket(name: str, items, *, enabled: int):
+        base = await store.add_base(
+            (name + suffix)[:60], isolated=1, enabled=enabled
+        )
+        added = 0
+        for item in items:
+            a, _ = await store.add_contacts([item], base.id)
+            added += a
+        return base, added
+
+    prem_base, prem_n = await _bucket(
+        f"★ Дорогие [{lang_label}]: {stamp}", result.premium, enabled=1
+    )
+    cod_base, cod_n = await _bucket(
+        f"Кодеры [{lang_label}]: {stamp}", result.coders, enabled=0
+    )
+    oth_base, oth_n = await _bucket(
+        f"Прочие [{lang_label}]: {stamp}", result.other, enabled=0
+    )
+
+    banned = 0
+    for item in result.banned:
+        reason = result.banned_reasons.get(f"{item.kind}:{item.value}", "banword")
+        if await store.add_ban_contact(
+            item.kind,
+            item.value,
+            display=item.display,
+            reason=reason,
+            source_base_id=prem_base.id,
+        ):
+            banned += 1
+
+    run = await store.add_collect_run(
+        source="api",
+        kind="premium",
+        mode=f"lang:{lang}",
+        target=acc.label,
+        title=f"★ {prem_n} / код {cod_n} / др {oth_n}",
+        account_id=acc.id,
+        base_id=prem_base.id,
+        added=prem_n + cod_n + oth_n,
+        banned=banned,
+        stopped=result.stopped,
+        notes="; ".join(result.notes[:8])
+        + f"; bases={prem_base.id},{cod_base.id},{oth_base.id}",
+    )
+    return {
+        "ok": True,
+        "language": lang,
+        "account_id": acc.id,
+        "chats_premium": result.chats_premium,
+        "chats_skipped": result.chats_skipped,
+        "chats_joined": result.chats_joined,
+        "chats_scanned": result.chats_scanned,
+        "premium_chat_titles": result.premium_chat_titles[:30],
+        "lang_skipped": result.lang_skipped,
+        "stopped": result.stopped,
+        "premium": {"base": to_dict(prem_base), "added": prem_n},
+        "coders": {"base": to_dict(cod_base), "added": cod_n},
+        "other": {"base": to_dict(oth_base), "added": oth_n},
+        "banned": banned,
         "run": to_dict(run),
         "notes": result.notes,
     }

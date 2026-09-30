@@ -20,6 +20,30 @@ class CollectResult:
     stopped: bool = False
 
 
+@dataclass
+class PremiumCollectResult:
+    """Три корзины: дорогие / кодеры / прочие."""
+
+    premium: list[Classified] = field(default_factory=list)
+    coders: list[Classified] = field(default_factory=list)
+    other: list[Classified] = field(default_factory=list)
+    banned: list[Classified] = field(default_factory=list)
+    banned_reasons: dict[str, str] = field(default_factory=dict)
+    skipped: int = 0
+    lang_skipped: int = 0
+    chats_scanned: int = 0
+    chats_premium: int = 0
+    chats_skipped: int = 0
+    chats_joined: int = 0
+    premium_chat_titles: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    stopped: bool = False
+
+    @property
+    def total(self) -> int:
+        return len(self.premium) + len(self.coders) + len(self.other)
+
+
 def _key(item: Classified) -> tuple[str, str]:
     return item.kind, item.value.lower()
 
