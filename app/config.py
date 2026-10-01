@@ -38,21 +38,21 @@ class Settings(BaseSettings):
     # OpenAI-compatible (bardborn / OpenAI / OpenRouter).
     # Bardborn:
     #   LLM_BASE_URL=https://bardborn.lol/v1
-    #   LLM_MODEL=gpt-5.5   (или claude-sonnet-5)
+    #   LLM_MODEL=claude-opus-5-5   (максимум качества)
     # OpenAI:
     #   LLM_BASE_URL=https://api.openai.com/v1
     #   LLM_MODEL=gpt-4o
     llm_enabled: bool = True
     llm_base_url: str = "https://bardborn.lol/v1"
     llm_api_key: str = ""
-    # Сильная модель (качество). mini — только если осознанно экономите.
-    llm_model: str = "gpt-5.5"
+    # Самая мощная модель на bardborn для разбора каждого сообщения
+    llm_model: str = "claude-opus-5-5"
     llm_model_refine: str = ""
     llm_timeout: float = 180.0
-    # Маленький батч + полные посты
-    llm_batch_size: int = 3
+    # 1 человек = 1 вызов; больше постов в промпт
+    llm_batch_size: int = 1
     llm_uncensored: bool = True
-    llm_max_posts: int = 50
+    llm_max_posts: int = 80
     premium_score_threshold: int = 70
     premium_chat_min_score: int = 0
     # Deep-scan всех групп, если их ≤ top_k; иначе LLM-rank по ~120 постам
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     premium_discover_join_max: int = 8
     # Сколько сообщений читать в каждой группе (полный скан)
     premium_messages_per_chat: int = 8000
-    premium_max_msgs_per_user: int = 60
+    premium_max_msgs_per_user: int = 80
 
     @property
     def admins(self) -> set[int]:

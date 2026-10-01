@@ -18,8 +18,8 @@ class IntelConfig:
     llm_model_refine: str = ""  # unused in quality mode (kept for compat)
     chat_min_score: int = 0
     chat_top_k: int = 80  # deep-scan до стольких групп; все если меньше
-    batch_size: int = 3  # маленькие батчи с ПОЛНЫМИ постами
-    max_posts_to_llm: int = 50
+    batch_size: int = 1  # 1 человек = 1 полный разбор всех постов
+    max_posts_to_llm: int = 80
     refine_lo: int = 0
     refine_hi: int = 0
     enable_refine: bool = False
@@ -54,33 +54,35 @@ async def run_people_intelligence(
 ) -> tuple[dict[int, FitVerdict], IntelStats]:
     """
     Quality path:
-      skip only empty → full posts → strong model (1 call = dossier+score)
-      small batches (2–3) keep quality; fallback one-by-one on miss
+      skip only empty → FULL posts → strongest model, 1 lead = 1 call
     """
     stats = IntelStats()
     out: dict[int, FitVerdict] = {}
     queue: list[PersonRaw] = []
 
     for raw in people:
-        substantive = [p for p in raw.posts if p and len(p.strip()) >= 8]
+        substantive = [p for p in raw.posts if p and len(p.strip()) >= 6]
         if len(substantive) < 2 and not (raw.bio and len(raw.bio) > 25):
             out[raw.user_id] = _empty_verdict(raw.user_id)
             stats.triage_skipped += 1
             continue
         queue.append(raw)
 
-    bs = max(1, min(4, int(cfg.batch_size or 3)))
+    # Always 1-by-1 for accurate reading of every message/ad
+    bs = 1
     total = len(queue)
     for i in range(0, total, bs):
         if should_stop and should_stop():
             break
         chunk = queue[i : i + bs]
         if on_progress:
-            await on_progress(f"LLM quality {min(i + bs, total)}/{total}")
+            await on_progress(f"LLM deep-read {min(i + bs, total)}/{total}")
         from app.ai.intel.prepare import person_prompt_block
 
         for p in chunk:
-            stats.approx_input_chars += len(person_prompt_block(p, max_posts=cfg.max_posts_to_llm))
+            stats.approx_input_chars += len(
+                person_prompt_block(p, max_posts=cfg.max_posts_to_llm)
+            )
 
         got = await qualify_batch_quality(
             chunk,

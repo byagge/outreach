@@ -383,8 +383,8 @@ def collect_premium_html() -> str:
         f"• 1 вызов = досье + score по смыслу поведения\n"
         f"• Без обрезки смысла / без mini ради копеек\n\n"
         f"Экономия только: мусор «ок/лол», дубли, пустые профили.\n\n"
-        f"{pe('warn')} Нужен API. Рекомендуем <code>gpt-5.5</code> "
-        f"или <code>claude-sonnet-5</code>.\n\n"
+        f"{pe('warn')} Нужен API. Рекомендуем <code>claude-opus-5-5</code> "
+        f"(или <code>claude-sonnet-5</code>).\n\n"
         f"Язык:"
     )
 

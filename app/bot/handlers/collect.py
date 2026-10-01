@@ -275,7 +275,7 @@ async def cb_col_plang(query: CallbackQuery, callback_data: MenuCB, state: FSMCo
             prompt_html(
                 "Нужен LLM",
                 "Для смыслового отбора нужен API:\n"
-                "• OpenAI-compatible <code>gpt-5.5</code> / <code>claude-sonnet-5</code>\n"
+                "• OpenAI-compatible <code>claude-opus-5-5</code>\n"
                 "• Bardborn / OpenAI / Anthropic / OpenRouter\n"
                 "В <code>.env</code>:\n"
                 "<code>LLM_ENABLED=true</code>\n"

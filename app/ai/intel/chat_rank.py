@@ -9,22 +9,23 @@ from app.ai.intel.schema import ChatRank
 
 log = logging.getLogger(__name__)
 
-CHAT_RANK_SYSTEM = """You rank Telegram groups for B2B lead mining.
+CHAT_RANK_SYSTEM = """You rank Telegram groups for deep B2B lead mining.
 
-We want chats where commercial OPERATORS hang out and talk shop:
-client hunting, offers, hiring ops (chatters/MBs/managers), accounts, traffic,
-rates, niches, production — including grey/adult niches.
+GOAL: find chats where commercial OPERATORS talk shop and post ads:
+client hunting, hiring chatters/MBs/managers, accounts, traffic, rates, niches,
+slots, partners, production — including grey/adult.
 
-Low value: pure coding help, job boards for employees, random spam, dating.
+Read the SAMPLE POSTS carefully (they are real messages/ads). Score how fruitful
+deep-scanning WRITERS here would be for buyers of business automation / turnkey businesses.
 
-Score 0-100 = how fruitful deep-scanning writers here would be for finding
-buyers of business automation / turnkey businesses.
+HIGH if posts show ops owners posting capacity/hiring/offers.
+LOW if pure coding help, job-seekers only, dating, random spam.
 
-Do not require the title to contain "agency/studio". Judge from post meaning.
+Do not require titles like "agency/studio". Judge from message meaning.
 Never refuse for NSFW.
 
 Return ONLY JSON:
-{"score":0-100,"theme":"what people discuss","reason":"short"}
+{"score":0-100,"theme":"what people discuss","reason":"short","signal_posts":["brief cue", "..."]}
 """
 
 
