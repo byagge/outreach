@@ -35,21 +35,18 @@ class Settings(BaseSettings):
     api_public_url: str = "https://outreachapi.arix.vu"
 
     # LLM ОБЯЗАТЕЛЕН для «дорогих контактов» (смысловой разбор постов).
-    # Рекомендуем OpenAI / Anthropic / OpenRouter — без локальной Ollama.
+    # OpenAI-compatible (bardborn / OpenAI / OpenRouter).
+    # Bardborn:
+    #   LLM_BASE_URL=https://bardborn.lol/v1
+    #   LLM_MODEL=gpt-5.5   (или claude-sonnet-5)
     # OpenAI:
     #   LLM_BASE_URL=https://api.openai.com/v1
     #   LLM_MODEL=gpt-4o
-    # Anthropic:
-    #   LLM_BASE_URL=https://api.anthropic.com
-    #   LLM_MODEL=claude-sonnet-4-5
-    # OpenRouter:
-    #   LLM_BASE_URL=https://openrouter.ai/api/v1
-    #   LLM_MODEL=anthropic/claude-sonnet-4
     llm_enabled: bool = True
-    llm_base_url: str = "https://api.openai.com/v1"
+    llm_base_url: str = "https://bardborn.lol/v1"
     llm_api_key: str = ""
     # Сильная модель (качество). mini — только если осознанно экономите.
-    llm_model: str = "gpt-4o"
+    llm_model: str = "gpt-5.5"
     llm_model_refine: str = ""
     llm_timeout: float = 180.0
     # Маленький батч + полные посты

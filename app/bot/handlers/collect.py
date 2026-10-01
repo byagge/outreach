@@ -275,9 +275,8 @@ async def cb_col_plang(query: CallbackQuery, callback_data: MenuCB, state: FSMCo
             prompt_html(
                 "Нужен LLM",
                 "Для смыслового отбора нужен API:\n"
-                "• OpenAI <code>gpt-4o</code>\n"
-                "• Anthropic <code>claude-sonnet-4-5</code>\n"
-                "• или OpenRouter\n\n"
+                "• OpenAI-compatible <code>gpt-5.5</code> / <code>claude-sonnet-5</code>\n"
+                "• Bardborn / OpenAI / Anthropic / OpenRouter\n"
                 "В <code>.env</code>:\n"
                 "<code>LLM_ENABLED=true</code>\n"
                 "<code>LLM_BASE_URL=...</code>\n"
@@ -328,7 +327,7 @@ async def cb_col_pacc(query: CallbackQuery, callback_data: MenuCB, state: FSMCon
             query,
             prompt_html(
                 "Нужен LLM",
-                "Заполните LLM_* в .env (OpenAI / Anthropic / OpenRouter).",
+                "Заполните LLM_* в .env (bardborn / OpenAI / OpenRouter).",
                 "warn",
             ),
             collect_premium_lang_kb(),
