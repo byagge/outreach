@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.keyboards import BTN_CANCEL, BTN_PANEL, MenuCB, main_menu, panel_keyboard
+from app.bot.notify import remember_chat
 from app.bot.render import safe_edit
 from app.context import ctx
 from app.jobs.runtime import runtime
@@ -28,6 +29,7 @@ async def show_home(event: Message | CallbackQuery) -> None:
 @router.message(Command("menu"))
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
+    await remember_chat(ctx.store, message.chat.id)
     await message.answer(
         f"{pe('cube')} <b>Outreach</b>",
         reply_markup=panel_keyboard(),
@@ -43,6 +45,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == BTN_PANEL)
 async def cmd_panel(message: Message, state: FSMContext) -> None:
     await state.clear()
+    await remember_chat(ctx.store, message.chat.id)
     await message.answer(
         await home_html(ctx.store),
         reply_markup=main_menu(runtime.is_running("outreach", 0)),

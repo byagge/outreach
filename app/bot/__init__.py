@@ -10,8 +10,10 @@ from app.bot.handlers import (
     history_router,
     menu_router,
     proxies_router,
+    replies_router,
     run_router,
     settings_router,
+    stats_router,
     texts_router,
 )
 
@@ -29,3 +31,5 @@ def setup_routers(dp: Dispatcher) -> None:
     dp.include_router(run_router)
     dp.include_router(settings_router)
     dp.include_router(history_router)
+    dp.include_router(stats_router)
+    dp.include_router(replies_router)

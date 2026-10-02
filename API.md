@@ -986,3 +986,37 @@ curl -s "${H[@]}" -X POST $BASE/v1/run/stop
 ## Версия
 
 `2.2.0` — кампании, отдельный сбор (`isolated`), assign баз, edit офферов, полные CRUD + run/history с метками кампаний.
+
+---
+
+## Аналитика и ответы
+
+Все эндпоинты требуют `X-API-Key`. Общие фильтры отчётов:
+`days` (1 = 24 ч, пусто = всё время) или `since`/`until` (ISO UTC), `campaign_id`, `account_id`.
+
+**Что считается ответом.** Входящее сообщение от человека, которому писал аккаунт, **без ссылок**
+(`http(s)://`, `www.`, `t.me/…`, домены, url/text_link-entities, превью страницы). Сообщение со
+ссылкой — редирект: сохраняется (`valid=0`), показывается отдельно (`redirect_*`), но в ответы,
+конверсию и уведомления не входит. Конверсия считается по когорте: берутся отправки периода, и
+смотрим, ответил ли адресат (когда бы ни ответил). `reply_rate_ci` — 95% интервал Уилсона.
+
+Входящие подтягивает фоновый слушатель в процессе бота (`main.py`) раз в `reply_poll_sec`
+(по умолчанию 45 с; ключ в `PUT /v1/settings/raw/reply_poll_sec`, `reply_listener=0` — выключить).
+Ответы, пришедшие до установки функции, подтягиваются тихо (без уведомлений) для отправок,
+у которых известен получатель (username / user_id).
+
+| Метод | Путь | Что |
+|-------|------|-----|
+| GET | `/v1/analytics/report` | Полный отчёт: overview, funnel, latency, our_response, dims, daily, reply_hours, errors, backlog, insights |
+| GET | `/v1/analytics/overview` | Сводка, воронка, скорость ответов, выводы |
+| GET | `/v1/analytics/breakdown/{dim}` | `account` `text` `campaign` `base` `kind` `proxy` `hour` `weekday` |
+| GET | `/v1/analytics/timeline` | По дням + часы, когда пишут ответы |
+| GET | `/v1/analytics/errors` | Топ причин ошибок |
+| GET | `/v1/analytics/report.xlsx` | Отчёт XLSX (обзор, срезы, ответы, редиректы) |
+| GET | `/v1/replies` | Ответы: `status=new\|answered\|ignored`, `redirects=true` — только со ссылками, `limit/offset` |
+| GET | `/v1/replies/{id}` | Ответ + диалог + наши ответы |
+| POST | `/v1/replies/{id}/answer` | `{"text": "..."}` — ответить с того же аккаунта |
+| POST | `/v1/replies/{id}/status` | `{"status": "ignored"\|"new"}` |
+
+В боте: **Статистика** (обзор, офферы, аккаунты, кампании/базы, время, ошибки, XLSX, ежедневный
+дайджест) и **Ответы**. Новый ответ приходит в чат с кнопками «Ответить» / «Диалог» / «Пропустить».

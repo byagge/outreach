@@ -91,7 +91,8 @@ def main_menu(running: bool = False) -> InlineKeyboardMarkup:
             [ib("Офферы", "texts", icon="mega"), ib("Аккаунты", "accounts", icon="user")],
             [ib("Прокси", "proxies", icon="shield"), ib("Настройки", "settings", icon="hammer")],
             [ib("Сбор базы", "collect", icon="search"), ib("Кампании", "camps", icon="folder")],
-            [ib("История", "history", icon="chart"), ib("Инфо", "info", icon="info")],
+            [ib("Статистика", "st", icon="chart"), ib("Ответы", "rp", icon="inbox")],
+            [ib("История", "history", icon="folder"), ib("Инфо", "info", icon="info")],
         ]
     )
 
@@ -826,3 +827,67 @@ def cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[ib(BTN_CANCEL, "cancel", icon="block")], home_row()]
     )
+
+
+# ------------------------------------------------------------------ статистика / ответы
+
+STAT_PERIODS = ["24 ч", "7 дн", "30 дн", "Всё"]
+
+
+def stats_kb(view: str, period: int, digest_hour: int = -1) -> InlineKeyboardMarkup:
+    """view — код текущего экрана (callback `a`), period — индекс периода."""
+    periods = [
+        ib(("• " if i == period else "") + name, view, i=i, icon="clock")
+        for i, name in enumerate(STAT_PERIODS)
+    ]
+    digest = f"Дайджест: {digest_hour:02d}:00" if digest_hour >= 0 else "Дайджест: выкл"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            periods,
+            [
+                ib("Обзор", "st", i=period, icon="chart"),
+                ib("Офферы", "st_txt", i=period, icon="mega"),
+                ib("Аккаунты", "st_acc", i=period, icon="user"),
+            ],
+            [
+                ib("Кампании", "st_cmp", i=period, icon="folder"),
+                ib("Время", "st_tm", i=period, icon="clock"),
+                ib("Ошибки", "st_err", i=period, icon="warn"),
+            ],
+            [ib("Ответы", "rp", icon="inbox"), ib("Отчёт XLSX", "st_xl", i=period, icon="stack")],
+            [ib(digest, "st_dg", i=period, icon="robot")],
+            home_row(),
+        ]
+    )
+
+
+def reply_notify_kb(reply_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [ib("Ответить", "rp_ans", i=reply_id, icon="mega")],
+            [
+                ib("Диалог", "rp_v", i=reply_id, icon="search"),
+                ib("Пропустить", "rp_ign", i=reply_id, icon="block"),
+            ],
+        ]
+    )
+
+
+def replies_kb(replies, page: int, pages: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for r in replies:
+        rows.append([ib(f"#{r.id} {r.who}"[:40], "rp_v", i=r.id, icon="inbox")])
+    if pages > 1:
+        rows.append(nav_row("rp", page, pages))
+    rows.append([ib("Статистика", "st", icon="chart"), ib("Обновить", "rp", p=page, icon="search")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reply_detail_kb(reply_id: int, answered: bool) -> InlineKeyboardMarkup:
+    rows = [[ib("Ответить ещё" if answered else "Ответить", "rp_ans", i=reply_id, icon="mega")]]
+    if not answered:
+        rows.append([ib("Пропустить", "rp_ign", i=reply_id, icon="block")])
+    rows.append([ib("К ответам", "rp", icon="inbox")])
+    rows.append(home_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)

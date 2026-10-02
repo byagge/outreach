@@ -23,7 +23,7 @@ from app.jobs.coordinator import coordinator
 from app.jobs.runtime import LogSink, runtime
 from app.models import Account, OutreachSettings, TextVariant
 from app.store import Store
-from app.tg.client import telethon_client
+from app.tg.client import account_lock, telethon_client
 from app.tg.send import send_human
 from app.ui.emoji import pe
 from app.utils.work_hours import in_work_hours
@@ -198,8 +198,10 @@ async def _account_worker(store: Store, account_id: int, sink: LogSink, scope: O
 
         try:
             await coordinator.wait_between_accounts(settings)
-            async with telethon_client(acc.telethon_session, proxy) as client:
-                await send_human(
+            async with account_lock(account_id), telethon_client(
+                acc.telethon_session, proxy
+            ) as client:
+                sent_info = await send_human(
                     client,
                     contact,
                     plan.text,
@@ -220,6 +222,8 @@ async def _account_worker(store: Store, account_id: int, sink: LogSink, scope: O
                 proxy_id=proxy.id if proxy else None,
                 status="sent",
                 detail=f"{scope.tag}: {plan.think}",
+                peer_id=sent_info.peer_id,
+                message_id=sent_info.message_id,
                 **camp_kw,
             )
             await store.bump_sent(account_id)
