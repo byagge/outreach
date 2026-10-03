@@ -71,3 +71,21 @@ async def test_bases_crud(client):
     assert r.json()["added"] == 2
     r = await client.get("/v1/stats", headers=h)
     assert r.json()["counts"]["pending"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoints(client):
+    h = {"X-API-Key": "test-key-for-pytest"}
+    assert (await client.get("/v1/analytics/overview")).status_code == 401
+    r = await client.get("/v1/analytics/overview?days=7", headers=h)
+    assert r.status_code == 200 and r.json()["overview"]["sent"] == 0
+    r = await client.get("/v1/analytics/breakdown/text", headers=h)
+    assert r.status_code == 200 and r.json()["items"] == []
+    assert (await client.get("/v1/analytics/breakdown/nope", headers=h)).status_code == 404
+    r = await client.get("/v1/analytics/report.xlsx", headers=h)
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    r = await client.get("/v1/replies", headers=h)
+    assert r.status_code == 200 and r.json()["total"] == 0
+    assert (await client.get("/v1/replies/999", headers=h)).status_code == 404
+    r = await client.post("/v1/replies/999/answer", json={"text": "hi"}, headers=h)
+    assert r.status_code == 400

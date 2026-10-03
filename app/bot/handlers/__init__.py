@@ -8,7 +8,9 @@ from app.bot.handlers.history import router as history_router
 from app.bot.handlers.menu import router as menu_router
 from app.bot.handlers.proxies import router as proxies_router
 from app.bot.handlers.run import router as run_router
+from app.bot.handlers.replies import router as replies_router
 from app.bot.handlers.settings import router as settings_router
+from app.bot.handlers.stats import router as stats_router
 from app.bot.handlers.texts import router as texts_router
 
 __all__ = [
@@ -21,7 +23,9 @@ __all__ = [
     "history_router",
     "menu_router",
     "proxies_router",
+    "replies_router",
     "run_router",
     "settings_router",
+    "stats_router",
     "texts_router",
 ]

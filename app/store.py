@@ -27,6 +27,7 @@ from app.models import (
     SendRow,
     TextVariant,
 )
+from app.store_replies import RepliesMixin
 from app.utils.proxy import ParsedProxy
 
 SCHEMA = """
@@ -203,6 +204,41 @@ CREATE TABLE IF NOT EXISTS collect_runs (
     notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER,
+    contact_id INTEGER,
+    send_id INTEGER,
+    text_id INTEGER,
+    campaign_id INTEGER,
+    campaign_name TEXT NOT NULL DEFAULT '',
+    peer_id INTEGER NOT NULL,
+    tg_msg_id INTEGER NOT NULL,
+    from_name TEXT NOT NULL DEFAULT '',
+    from_username TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    media TEXT NOT NULL DEFAULT '',
+    has_link INTEGER NOT NULL DEFAULT 0,
+    valid INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'new',
+    notified INTEGER NOT NULL DEFAULT 0,
+    msg_date TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    answered_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(account_id, peer_id, tg_msg_id)
+);
+
+CREATE TABLE IF NOT EXISTS reply_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reply_id INTEGER NOT NULL REFERENCES replies(id) ON DELETE CASCADE,
+    account_id INTEGER,
+    peer_id INTEGER NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    tg_msg_id INTEGER,
+    source TEXT NOT NULL DEFAULT 'bot',
+    created_at TEXT NOT NULL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -358,7 +394,7 @@ def _text(row: aiosqlite.Row) -> TextVariant:
     )
 
 
-class Store:
+class Store(RepliesMixin):
     def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path or DB_PATH)
         self._claim_lock = asyncio.Lock()
@@ -417,6 +453,28 @@ class Store:
             await db.execute(
                 "ALTER TABLE sends ADD COLUMN campaign_name TEXT NOT NULL DEFAULT ''"
             )
+
+        if "peer_id" not in send_cols:
+            await db.execute("ALTER TABLE sends ADD COLUMN peer_id INTEGER")
+        if "message_id" not in send_cols:
+            await db.execute("ALTER TABLE sends ADD COLUMN message_id INTEGER")
+
+        for ddl in (
+            "CREATE INDEX IF NOT EXISTS idx_sends_contact ON sends(contact_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sends_created ON sends(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_sends_peer ON sends(account_id, peer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_replies_send ON replies(send_id)",
+            "CREATE INDEX IF NOT EXISTS idx_replies_date ON replies(msg_date)",
+            "CREATE INDEX IF NOT EXISTS idx_replies_status ON replies(status, valid)",
+            "CREATE INDEX IF NOT EXISTS idx_answers_reply ON reply_answers(reply_id)",
+        ):
+            await db.execute(ddl)
+
+        # Момент, с которого ведём учёт ответов: всё, что старше, подтягивается тихо (без уведомлений).
+        await db.execute(
+            "INSERT OR IGNORE INTO settings(key, value) VALUES('replies_tracking_since', ?)",
+            (_now(),),
+        )
 
         text_cols = await _cols("texts")
         if "campaign_id" not in text_cols:
@@ -1077,12 +1135,14 @@ class Store:
         detail: str = "",
         campaign_id: int | None = None,
         campaign_name: str = "",
+        peer_id: int | None = None,
+        message_id: int | None = None,
     ) -> None:
         async with self._connect() as db:
             await db.execute(
                 "INSERT INTO sends(contact_id, account_id, text_id, proxy_id, status, detail, "
-                "created_at, campaign_id, campaign_name) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "created_at, campaign_id, campaign_name, peer_id, message_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     contact_id,
                     account_id,
@@ -1093,6 +1153,8 @@ class Store:
                     _now(),
                     campaign_id,
                     campaign_name or "",
+                    peer_id,
+                    message_id,
                 ),
             )
             await db.commit()
