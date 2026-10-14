@@ -12,6 +12,7 @@ from aiogram.types import BufferedInputFile
 from app.bot.notify import notify_chats
 from app.config import get_settings
 from app.store import Store
+from app.ui.charts import try_chart
 from app.ui.stats_screens import overview_html
 from app.utils.report import build_report_xlsx
 
@@ -20,11 +21,19 @@ log = logging.getLogger("outreach.digest")
 
 async def send_digest(store: Store, bot: Bot, days: int = 1) -> int:
     data, report = await build_report_xlsx(store, days=days)
-    text = overview_html(report, "24 ч" if days == 1 else f"{days} дн")
+    label = "24 ч" if days == 1 else f"{days} дн"
+    text = overview_html(report, label)
+    dash = try_chart("dashboard", report, label)
     sent = 0
     for chat_id in await notify_chats(store):
         try:
             await bot.send_message(chat_id, text, parse_mode="HTML")
+            if dash:
+                await bot.send_photo(
+                    chat_id,
+                    BufferedInputFile(dash, filename="dashboard.png"),
+                    caption=f"Сводка · {label}",
+                )
             await bot.send_document(
                 chat_id,
                 BufferedInputFile(data, filename=f"outreach_report_{datetime.now():%Y-%m-%d}.xlsx"),

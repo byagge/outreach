@@ -854,8 +854,11 @@ def stats_kb(view: str, period: int, digest_hour: int = -1) -> InlineKeyboardMar
                 ib("Время", "st_tm", i=period, icon="clock"),
                 ib("Ошибки", "st_err", i=period, icon="warn"),
             ],
-            [ib("Ответы", "rp", icon="inbox"), ib("Отчёт XLSX", "st_xl", i=period, icon="stack")],
-            [ib(digest, "st_dg", i=period, icon="robot")],
+            [
+                ib("Диаграммы", "st_ch", i=period, icon="chart"),
+                ib("Отчёт XLSX", "st_xl", i=period, icon="stack"),
+            ],
+            [ib("Ответы", "rp", icon="inbox"), ib(digest, "st_dg", i=period, icon="robot")],
             home_row(),
         ]
     )

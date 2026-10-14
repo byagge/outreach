@@ -84,6 +84,11 @@ async def test_analytics_endpoints(client):
     assert (await client.get("/v1/analytics/breakdown/nope", headers=h)).status_code == 404
     r = await client.get("/v1/analytics/report.xlsx", headers=h)
     assert r.status_code == 200 and r.content[:2] == b"PK"
+    r = await client.get("/v1/analytics/charts", headers=h)
+    assert r.status_code == 200 and "dashboard" in r.json()["kinds"]
+    r = await client.get("/v1/analytics/charts/dashboard.png?days=7", headers=h)
+    assert r.status_code == 200 and r.content[:4] == b"\x89PNG"
+    assert (await client.get("/v1/analytics/charts/nope.png", headers=h)).status_code == 404
     r = await client.get("/v1/replies", headers=h)
     assert r.status_code == 200 and r.json()["total"] == 0
     assert (await client.get("/v1/replies/999", headers=h)).status_code == 404

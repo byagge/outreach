@@ -1013,10 +1013,28 @@ curl -s "${H[@]}" -X POST $BASE/v1/run/stop
 | GET | `/v1/analytics/timeline` | По дням + часы, когда пишут ответы |
 | GET | `/v1/analytics/errors` | Топ причин ошибок |
 | GET | `/v1/analytics/report.xlsx` | Отчёт XLSX (обзор, срезы, ответы, редиректы) |
+| GET | `/v1/analytics/charts` | Список видов PNG-диаграмм |
+| GET | `/v1/analytics/charts/{kind}.png` | PNG: `dashboard` `funnel` `offers` `accounts` `campaigns` `timeline` `latency` `hours` (те же фильтры `days`/`since`/`until`/…) |
 | GET | `/v1/replies` | Ответы: `status=new\|answered\|ignored`, `redirects=true` — только со ссылками, `limit/offset` |
 | GET | `/v1/replies/{id}` | Ответ + диалог + наши ответы |
 | POST | `/v1/replies/{id}/answer` | `{"text": "..."}` — ответить с того же аккаунта |
 | POST | `/v1/replies/{id}/status` | `{"status": "ignored"\|"new"}` |
 
-В боте: **Статистика** (обзор, офферы, аккаунты, кампании/базы, время, ошибки, XLSX, ежедневный
-дайджест) и **Ответы**. Новый ответ приходит в чат с кнопками «Ответить» / «Диалог» / «Пропустить».
+Пример диаграммы:
+
+```bash
+curl -H "X-API-Key: $API_KEY" \
+  "https://outreachapi.arix.vu/v1/analytics/charts/dashboard.png?days=7" \
+  -o dashboard.png
+```
+
+Полный JSON-отчёт:
+
+```bash
+curl -H "X-API-Key: $API_KEY" \
+  "https://outreachapi.arix.vu/v1/analytics/report?days=7"
+```
+
+В боте: **Статистика** (обзор, офферы, аккаунты, кампании/базы, время, ошибки, **Диаграммы** PNG,
+XLSX, ежедневный дайджест) и **Ответы**. Новый ответ приходит в чат с кнопками «Ответить» /
+«Диалог» / «Пропустить».

@@ -2,18 +2,30 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery
+from aiogram.types import BufferedInputFile, CallbackQuery, InputMediaPhoto
 
 from app.analytics import build_report
 from app.bot.keyboards import MenuCB, stats_kb
 from app.bot.render import safe_edit
 from app.context import ctx
 from app.ui import stats_screens as ui
+from app.ui.charts import try_build_charts
 from app.utils.report import build_report_xlsx
 
 router = Router()
 
 DIGEST_HOURS = [-1, 9, 12, 18, 21]
+
+# Какие картинки шлём по кнопке «Диаграммы» (порядок = альбом)
+_CHART_ORDER = ("dashboard", "funnel", "offers", "timeline", "latency", "hours")
+_CHART_CAPTION = {
+    "dashboard": "Сводка",
+    "funnel": "Воронка",
+    "offers": "Офферы",
+    "timeline": "Динамика",
+    "latency": "Скорость ответа",
+    "hours": "Часы ответов",
+}
 
 
 async def _digest_hour() -> int:
@@ -60,6 +72,40 @@ async def cb_stats_xlsx(query: CallbackQuery, callback_data: MenuCB) -> None:
     await query.message.answer_document(
         BufferedInputFile(data, filename=name),
         caption=f"Отчёт · {ui.period_label(idx)}",
+    )
+
+
+@router.callback_query(MenuCB.filter(F.a == "st_ch"))
+async def cb_stats_charts(query: CallbackQuery, callback_data: MenuCB) -> None:
+    """Рисует PNG-диаграммы по текущему периоду и шлёт альбомом в чат."""
+    idx = max(0, min(callback_data.i, len(ui.PERIODS) - 1))
+    label = ui.period_label(idx)
+    await query.answer("Рисую диаграммы…")
+    report = await build_report(ctx.store, days=ui.period_days(idx))
+    charts = try_build_charts(report, label)
+    media: list[InputMediaPhoto] = []
+    for kind in _CHART_ORDER:
+        png = charts.get(kind)
+        if not png:
+            continue
+        media.append(
+            InputMediaPhoto(
+                media=BufferedInputFile(png, filename=f"{kind}.png"),
+                caption=f"{_CHART_CAPTION.get(kind, kind)} · {label}" if not media else None,
+            )
+        )
+    if not media:
+        await query.message.answer(
+            "Не удалось нарисовать диаграммы. Установите Pillow: <code>pip install Pillow</code>",
+            parse_mode="HTML",
+        )
+        return
+    # Telegram media group: до 10 фото
+    await query.message.answer_media_group(media[:10])
+    # меню статистики остаётся доступным отдельным сообщением
+    await query.message.answer(
+        f"Диаграммы · {label}",
+        reply_markup=stats_kb("st", idx, await _digest_hour()),
     )
 
 

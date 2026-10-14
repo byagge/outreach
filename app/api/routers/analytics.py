@@ -11,6 +11,7 @@ from app.api.deps import get_store, require_api_key
 from app.api.serialize import to_dict
 from app.jobs.replies import AnswerError, send_answer
 from app.store import Store
+from app.ui.charts import CHART_KINDS, try_chart
 from app.utils.report import build_report_xlsx
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_api_key)])
@@ -93,6 +94,41 @@ async def report_xlsx(f: dict = Depends(_filters), store: Store = Depends(get_st
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="outreach_report.xlsx"'},
+    )
+
+
+@router.get("/charts")
+async def charts_index():
+    """Список доступных PNG-диаграмм."""
+    return {
+        "ok": True,
+        "kinds": list(CHART_KINDS),
+        "hint": "GET /v1/analytics/charts/{kind}.png?days=7",
+    }
+
+
+@router.get("/charts/{kind}.png")
+async def chart_png(kind: str, f: dict = Depends(_filters), store: Store = Depends(get_store)):
+    """PNG-диаграмма: dashboard | funnel | offers | accounts | campaigns | timeline | latency | hours."""
+    if kind not in CHART_KINDS:
+        raise HTTPException(404, f"Неизвестный вид. Доступно: {', '.join(CHART_KINDS)}")
+    report = await build_report(store, **f)
+    days = f.get("days")
+    if days == 1:
+        label = "24 ч"
+    elif days:
+        label = f"{days} дн"
+    elif f.get("since") or f.get("until"):
+        label = "период"
+    else:
+        label = "всё время"
+    png = try_chart(kind, report, label)
+    if not png:
+        raise HTTPException(500, "Не удалось нарисовать диаграмму (Pillow?)")
+    return Response(
+        png,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="outreach_{kind}.png"'},
     )
 
 
