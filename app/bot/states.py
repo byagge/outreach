@@ -65,3 +65,7 @@ class CampaignText(StatesGroup):
     add = State()
     edit = State()
     title = State()
+
+
+class ReplyAnswerState(StatesGroup):
+    text = State()

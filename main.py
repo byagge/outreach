@@ -15,7 +15,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.bot import setup_routers
 from app.bot.middlewares import AdminOnlyMiddleware
 from app.config import ensure_dirs, get_settings
+from app.bot.notify import send_reply_notification
 from app.context import ctx
+from app.jobs.digest import run_daily_digest
+from app.jobs.replies import run_reply_listener
 from app.store import Store
 
 logging.basicConfig(
@@ -43,8 +46,20 @@ async def main() -> None:
     dp.update.outer_middleware(AdminOnlyMiddleware())
     setup_routers(dp)
 
+    async def notify(reply) -> None:
+        await send_reply_notification(bot, store, reply)
+
+    background = [
+        asyncio.create_task(run_reply_listener(store, notify), name="reply-listener"),
+        asyncio.create_task(run_daily_digest(store, bot), name="daily-digest"),
+    ]
     log.info("Outreach bot starting")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
 
 
 if __name__ == "__main__":

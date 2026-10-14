@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 from telethon import TelegramClient
@@ -9,6 +10,12 @@ from telethon.tl.types import InputPhoneContact, User
 
 from app.models import Contact, TextVariant
 from app.utils.entities import entities_loads, to_telethon_entities
+
+
+@dataclass
+class SentInfo:
+    peer_id: int | None = None
+    message_id: int | None = None
 
 
 async def resolve_peer(client: TelegramClient, contact: Contact):
@@ -51,7 +58,7 @@ async def send_human(
     *,
     typing_seconds: float,
     pre_pause: float,
-) -> None:
+) -> SentInfo:
     entity = await resolve_peer(client, contact)
     if isinstance(entity, User) and getattr(entity, "bot", False):
         raise RuntimeError("Это бот — пропускаю")
@@ -69,18 +76,28 @@ async def send_human(
     entities = to_telethon_entities(entities_loads(variant.entities_json))
     text = variant.text or ""
     if photo and Path(photo).exists():
-        await client.send_file(
+        sent = await client.send_file(
             entity,
             photo,
             caption=text or None,
             formatting_entities=entities or None,
         )
-        return
+        return _sent_info(entity, sent)
     if not text.strip():
         raise RuntimeError("Пустой оффер — пропускаю")
-    await client.send_message(
+    sent = await client.send_message(
         entity,
         text,
         formatting_entities=entities or None,
         link_preview=False,
+    )
+    return _sent_info(entity, sent)
+
+
+def _sent_info(entity, sent) -> SentInfo:
+    peer_id = getattr(entity, "id", None)
+    msg_id = getattr(sent, "id", None)
+    return SentInfo(
+        peer_id=int(peer_id) if peer_id is not None else None,
+        message_id=int(msg_id) if msg_id is not None else None,
     )

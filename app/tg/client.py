@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +11,20 @@ from telethon.tl.types import User
 
 from app.config import get_settings
 from app.models import Proxy
+
+
+_ACCOUNT_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def account_lock(account_id: int) -> asyncio.Lock:
+    """
+    Один Telethon-коннект на аккаунт за раз: sqlite-session нельзя открывать параллельно.
+    Берут и отправка, и опрос входящих.
+    """
+    lock = _ACCOUNT_LOCKS.get(account_id)
+    if lock is None:
+        lock = _ACCOUNT_LOCKS[account_id] = asyncio.Lock()
+    return lock
 
 
 def session_stem(path: str | Path) -> str:

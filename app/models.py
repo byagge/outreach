@@ -254,3 +254,50 @@ class Counts:
     blocklist: int = 0
     banwords: int = 0
     ban_contacts: int = 0
+
+
+@dataclass
+class Reply:
+    """Входящее сообщение от контакта, которому мы писали."""
+
+    id: int
+    account_id: int | None
+    contact_id: int | None
+    send_id: int | None
+    text_id: int | None
+    peer_id: int
+    tg_msg_id: int
+    text: str = ""
+    media: str = ""
+    from_name: str = ""
+    from_username: str = ""
+    has_link: int = 0
+    valid: int = 1  # 1 = живой ответ; 0 = со ссылкой (редирект) — в статистику ответов не входит
+    status: str = "new"  # new | answered | ignored
+    notified: int = 0
+    campaign_id: int | None = None
+    campaign_name: str = ""
+    msg_date: str = ""
+    created_at: str = ""
+    answered_at: str = ""
+    account_label: str = ""
+    contact_pretty: str = ""
+    text_title: str = ""
+
+    @property
+    def who(self) -> str:
+        if self.from_username:
+            return f"@{self.from_username}"
+        return self.from_name or self.contact_pretty or f"id{self.peer_id}"
+
+
+@dataclass
+class ReplyAnswer:
+    id: int
+    reply_id: int
+    account_id: int | None
+    peer_id: int
+    text: str
+    tg_msg_id: int | None = None
+    source: str = "bot"
+    created_at: str = ""

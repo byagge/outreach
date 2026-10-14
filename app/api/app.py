@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import (
     accounts,
+    analytics,
     bases,
     campaigns,
     collect,
@@ -40,7 +41,8 @@ def create_app() -> FastAPI:
         version="2.2.0",
         description=(
             "HTTP API outreach: аккаунты, базы, прокси, офферы, сбор, "
-            "кампании (отдельные базы/аккаунты/офферы), рассылка, история."
+            "кампании (отдельные базы/аккаунты/офферы), рассылка, история, "
+            "аналитика и ответы."
         ),
         lifespan=lifespan,
         docs_url="/docs",
@@ -67,6 +69,8 @@ def create_app() -> FastAPI:
     app.include_router(collect.router, prefix="/v1")
     app.include_router(run.router, prefix="/v1")
     app.include_router(history.router, prefix="/v1")
+    app.include_router(analytics.router, prefix="/v1")
+    app.include_router(analytics.replies_router, prefix="/v1")
 
     @app.get("/")
     async def root():
